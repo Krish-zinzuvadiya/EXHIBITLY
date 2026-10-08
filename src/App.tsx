@@ -16,7 +16,7 @@ const expoLogoUrl = (website?: string) => {
   try {
     const site = new URL(/^https?:\/\//i.test(website.trim()) ? website.trim() : `https://${website.trim()}`)
     if (!['http:', 'https:'].includes(site.protocol)) return ''
-    return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(site.origin)}&sz=128`
+    return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(site.origin)}&sz=256`
   } catch { return '' }
 }
 const statusLabel = (status: Status) => statuses.find((item) => item.value === status)?.label || 'Interested'
@@ -111,7 +111,7 @@ function ExpoLogo({ website, name, variant = 'card' }: { website?: string; name:
   const source = expoLogoUrl(website)
   const [failedSource, setFailedSource] = useState('')
   return <span className={`expo-logo-mark ${variant}`} role="img" aria-label={`${name} website logo`}>
-    {source && failedSource !== source ? <img src={source} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedSource(source)} /> : <Building2 size={variant === 'compact' ? 18 : 28} />}
+    {source && failedSource !== source ? <img src={source} alt="" loading={variant === 'compact' ? 'lazy' : 'eager'} referrerPolicy="no-referrer" onError={() => setFailedSource(source)} /> : <Building2 size={variant === 'compact' ? 18 : 28} />}
   </span>
 }
 function ExpoRow({ expo, index, onClick }: { expo: Expo; index: number; onClick: () => void }) { return <button className="expo-row" onClick={onClick}><span className={`expo-cover cover-${index % 4}`}><ExpoLogo website={expo.website} name={expo.name} variant="compact" /></span><span className="expo-row-main"><strong>{expo.name}</strong><small><CalendarDays size={13} />{safeDate(expo.startDate)}{expo.city ? <><span className="middot">·</span>{expo.city}</> : null}</small></span><span className="expo-row-stat"><strong>{expo.leadCount ?? 0}</strong><small>leads</small></span><ChevronRight className="row-chevron" size={17} /></button> }

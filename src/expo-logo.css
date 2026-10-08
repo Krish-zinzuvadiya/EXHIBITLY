@@ -1,0 +1,35 @@
+.expo-art .expo-logo-mark.card {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  padding: 12px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.expo-art .expo-logo-mark.card img,
+.expo-workspace-art .expo-logo-mark.workspace img,
+.expo-cover .expo-logo-mark.compact img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain !important;
+  object-position: center;
+}
+
+.expo-workspace-art .expo-logo-mark.workspace {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
