@@ -3,7 +3,8 @@ import mongoose, { Schema, type InferSchemaType, type Types } from 'mongoose'
 const userSchema = new Schema({
   name: { type: String, required: true, trim: true, maxlength: 100 },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  passwordHash: { type: String, required: true },
+  passwordHash: { type: String },
+  googleId: { type: String, trim: true, unique: true, sparse: true },
 }, { timestamps: true })
 
 const expoSchema = new Schema({

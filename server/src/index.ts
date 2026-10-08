@@ -1,4 +1,5 @@
 import express, { type NextFunction, type Request, type Response } from 'express'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import mongoose, { Types } from 'mongoose'
 import helmet from 'helmet'
 import cookieParser from 'cookie-parser'
@@ -40,6 +41,9 @@ const userOnly = (req: AuthedRequest) => ({ userId: req.userId })
 const isStatus = (value: unknown): value is LeadStatus => statuses.includes(value as LeadStatus)
 const cookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: isProduction, path: '/' }
 const issueSession = (res: Response, userId: string) => res.cookie('expo_session', jwt.sign({}, jwtSecret, { subject: userId, expiresIn: '7d' }), { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 })
+const oauthCookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: isProduction, path: '/api/auth/google/callback' }
+const googleRedirectUri = (req: Request) => process.env.GOOGLE_REDIRECT_URI?.trim() || `${req.protocol}://${req.get('host')}/api/auth/google/callback`
+const redirectGoogleError = (res: Response, code: string) => res.redirect(`/?authError=${encodeURIComponent(code)}`)
 const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next)
 const recordActivity = (userId: string, description: string, fields: { action: string; expoId?: Types.ObjectId | string; leadId?: Types.ObjectId | string; metadata?: object }) => Activity.create({ userId, description, ...fields })
 const getOwnedExpo = (expoId: string, userId: string) => Expo.findOne({ _id: expoId, userId })
@@ -47,6 +51,112 @@ const getOwnedExpo = (expoId: string, userId: string) => Expo.findOne({ _id: exp
 app.get('/api/health', (_req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 }))
 
 app.get('/api/auth/registration-open', asyncRoute(async (_req, res) => res.json({ open: (await User.countDocuments()) === 0 })))
+app.get('/api/auth/google/start', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
+  if (!clientId || !clientSecret) return redirectGoogleError(res, 'google_not_configured')
+
+  const state = randomBytes(32).toString('base64url')
+  const codeVerifier = randomBytes(48).toString('base64url')
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url')
+  res.cookie('google_oauth_state', state, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+  res.cookie('google_oauth_verifier', codeVerifier, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+
+  const authorizationUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+  authorizationUrl.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: googleRedirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    prompt: 'select_account',
+  }).toString()
+  return res.redirect(authorizationUrl.toString())
+})
+
+app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
+  const state = typeof req.query.state === 'string' ? req.query.state : ''
+  const savedState = req.cookies?.google_oauth_state as string | undefined
+  const codeVerifier = req.cookies?.google_oauth_verifier as string | undefined
+  res.clearCookie('google_oauth_state', oauthCookieOptions)
+  res.clearCookie('google_oauth_verifier', oauthCookieOptions)
+
+  const stateBuffer = Buffer.from(state)
+  const savedStateBuffer = Buffer.from(savedState || '')
+  if (!state || !savedState || stateBuffer.length !== savedStateBuffer.length || !timingSafeEqual(stateBuffer, savedStateBuffer)) {
+    return redirectGoogleError(res, 'google_state_invalid')
+  }
+  if (req.query.error) return redirectGoogleError(res, 'google_cancelled')
+  const code = typeof req.query.code === 'string' ? req.query.code : ''
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
+  if (!code || !codeVerifier || !clientId || !clientSecret) return redirectGoogleError(res, 'google_failed')
+
+  try {
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        code_verifier: codeVerifier,
+        grant_type: 'authorization_code',
+        redirect_uri: googleRedirectUri(req),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!tokenResponse.ok) return redirectGoogleError(res, 'google_failed')
+    const tokens = await tokenResponse.json() as { access_token?: string }
+    if (!tokens.access_token) return redirectGoogleError(res, 'google_failed')
+
+    const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!profileResponse.ok) return redirectGoogleError(res, 'google_failed')
+    const profile = await profileResponse.json() as { sub?: string; email?: string; email_verified?: boolean; name?: string }
+    if (!profile.sub || !profile.email || profile.email_verified !== true) return redirectGoogleError(res, 'google_email_unverified')
+
+    const email = profile.email.trim().toLowerCase()
+    let user = await User.findOne({ googleId: profile.sub })
+    if (!user) {
+      user = await User.findOne({ email })
+      if (user) {
+        if (user.googleId && user.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+        user.googleId = profile.sub
+        await user.save()
+      } else {
+        if (await User.exists({})) return redirectGoogleError(res, 'google_workspace_exists')
+        try {
+          user = await User.create({
+            name: profile.name?.trim() || email.split('@')[0],
+            email,
+            googleId: profile.sub,
+          })
+        } catch (error) {
+          if ((error as { code?: number }).code !== 11000) throw error
+          user = await User.findOne({ $or: [{ googleId: profile.sub }, { email }] })
+          if (!user) throw error
+          if (user.googleId && user.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+          if (!user.googleId) {
+            user.googleId = profile.sub
+            await user.save()
+          }
+        }
+      }
+    }
+
+    issueSession(res, String(user._id))
+    return res.redirect('/')
+  } catch (error) {
+    console.error('Google sign-in failed:', error)
+    return redirectGoogleError(res, 'google_failed')
+  }
+}))
+
 app.post('/api/auth/register', asyncRoute(async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(1).max(100), email: z.string().trim().email().max(254), password: z.string().min(10).max(128) }).safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ message: 'Enter your name, a valid email and a password with at least 10 characters.' })
@@ -60,7 +170,7 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const parsed = z.object({ email: z.string().trim().email(), password: z.string().min(1) }).safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ message: 'Enter your email and password.' })
   const user = await User.findOne({ email: parsed.data.email.toLowerCase() })
-  if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) return res.status(401).json({ message: 'Email or password is incorrect.' })
+  if (!user?.passwordHash || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) return res.status(401).json({ message: 'Email or password is incorrect.' })
   issueSession(res, String(user._id))
   return res.json({ user: { id: user._id, name: user.name, email: user.email } })
 }))
