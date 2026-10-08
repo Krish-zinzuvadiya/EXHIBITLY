@@ -5,7 +5,7 @@ import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bel
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { format, isValid, parseISO } from 'date-fns'
 import { api, json } from './api'
-import { statuses, type Expo, type Lead, type Page, type Status, type User } from './types'
+import { statuses, type CustomizationPreferences, type Expo, type Lead, type Page, type Status, type User } from './types'
 
 type ToastFn = (message: string, tone?: 'success' | 'error') => void
 let notify: ToastFn = () => undefined
@@ -24,6 +24,18 @@ const queryString = (values: Record<string, string | number | undefined>) => { c
 const initials = (name = '') => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'EL'
 const dateGreeting = () => { const hour = new Date().getHours(); return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening' }
 const importMapFields = [{ key: 'visitDate', label: 'Date visited' }, { key: 'companyName', label: 'Company' }, { key: 'businessCategory', label: 'Business category' }, { key: 'personName', label: 'Person name *' }, { key: 'designation', label: 'Designation' }, { key: 'primaryPhone', label: 'Number' }, { key: 'otherPhones', label: 'Other numbers' }, { key: 'email', label: 'Email' }, { key: 'website', label: 'Website' }, { key: 'socialPlatform', label: 'Social media platform' }, { key: 'socialProfile', label: 'Social media link' }]
+const defaultCustomization: CustomizationPreferences = { accent: 'ember', density: 'comfortable' }
+const customizationThemes: { id: CustomizationPreferences['accent']; label: string; color: string; description: string }[] = [
+  { id: 'ember', label: 'Ember', color: '#ff6b28', description: 'Exhibity orange' },
+  { id: 'ocean', label: 'Ocean', color: '#527de0', description: 'Calm blue' },
+  { id: 'forest', label: 'Forest', color: '#378b69', description: 'Fresh green' },
+  { id: 'plum', label: 'Plum', color: '#8b63c7', description: 'Rich violet' },
+  { id: 'slate', label: 'Slate', color: '#53657d', description: 'Quiet neutral' },
+]
+const applyCustomization = (preferences: CustomizationPreferences) => {
+  document.documentElement.dataset.accent = preferences.accent
+  document.documentElement.dataset.density = preferences.density
+}
 
 export default function App() {
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null)
@@ -33,11 +45,9 @@ export default function App() {
 
 function AuthGate() {
   const session = useQuery({ queryKey: ['session'], queryFn: () => api<{ user: User }>('/auth/me'), retry: false })
-  const registration = useQuery({ queryKey: ['registration-open'], queryFn: () => api<{ open: boolean }>('/auth/registration-open'), enabled: session.isError, retry: false })
   if (session.isPending) return <div className="screen-loader"><LoaderCircle className="spin" size={24} /> Loading your workspace…</div>
-  if (session.data?.user) return <Routes><Route element={<Shell user={session.data.user} />}><Route index element={<Dashboard />} /><Route path="expos" element={<ExposPage />} /><Route path="expos/:expoId" element={<ExpoWorkspace />} /><Route path="leads" element={<LeadsPage />} /><Route path="leads/:leadId" element={<LeadDetails />} /><Route path="activity" element={<ActivityPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
-  if (registration.isPending) return <div className="screen-loader"><LoaderCircle className="spin" size={24} /> Preparing workspace setup…</div>
-  return <AuthPage setup={Boolean(registration.data?.open)} />
+  if (session.data?.user) return <Routes><Route element={<Shell user={session.data.user} />}><Route index element={<Dashboard />} /><Route path="expos" element={<ExposPage />} /><Route path="expos/:expoId" element={<ExpoWorkspace />} /><Route path="leads" element={<LeadsPage />} /><Route path="leads/:leadId" element={<LeadDetails />} /><Route path="activity" element={<ActivityPage />} /><Route path="customization" element={<CustomizationPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
+  return <AuthPage />
 }
 
 function Shell({ user }: { user: User }) {
@@ -45,10 +55,12 @@ function Shell({ user }: { user: User }) {
   const navigate = useNavigate()
   const [mobileMenu, setMobileMenu] = useState(false)
   const [profileMenu, setProfileMenu] = useState(false)
+  const preferences = useQuery({ queryKey: ['preferences'], queryFn: () => api<CustomizationPreferences>('/preferences') })
   const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void>; userChoice?: Promise<{ outcome: string }> } | null>(null)
   useEffect(() => { const handler = (event: Event) => { event.preventDefault(); setInstallPrompt(event as typeof installPrompt) }; window.addEventListener('beforeinstallprompt', handler); return () => window.removeEventListener('beforeinstallprompt', handler) }, [])
   const logout = useMutation({ mutationFn: () => api('/auth/logout', { method: 'POST' }), onSuccess: () => { window.location.assign('/') } })
   const activeExpo = location.pathname.match(/^\/expos\/([^/]+)/)?.[1]
+  useEffect(() => { applyCustomization(preferences.data || defaultCustomization) }, [preferences.data])
   const mainNav = [{ to: '/', label: 'Overview', icon: LayoutDashboard }, { to: '/expos', label: 'Expos', icon: Building2 }, { to: '/leads', label: 'All leads', icon: Users }, { to: '/activity', label: 'Activity', icon: ActivityIcon }]
   const install = async () => { if (!installPrompt?.prompt) { notify('In Chrome, use Install app from the address bar menu.'); return }; await installPrompt.prompt(); setInstallPrompt(null) }
   return <div className="app-frame">
@@ -63,14 +75,14 @@ function Shell({ user }: { user: User }) {
     </aside>
     {mobileMenu && <button className="sidebar-overlay" aria-label="Close menu" onClick={() => setMobileMenu(false)} />}
     <main className="main-shell">
-      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14} /><strong>{breadcrumb(location.pathname)}</strong></div></div><div className="topbar-actions"><button className="help-button" onClick={() => notify('Your expo workspace is ready to organize leads.')}><CircleHelp size={17} /><span>Help center</span></button><button className="icon-button notification-button" aria-label="Activity" onClick={() => navigate('/activity')}><Bell size={18} /><i /></button><div className="profile-menu-container"><button className="avatar avatar-top" onClick={() => setProfileMenu(!profileMenu)}>{initials(user.name)}</button>{profileMenu && <><div className="dropdown-overlay" onClick={() => setProfileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} /><div className="profile-dropdown"><div className="profile-dropdown-header"><strong>{user.name}</strong><small>{user.email}</small></div><button onClick={() => { setProfileMenu(false); notify('Customization coming soon'); }}><Settings size={15} /> Customization</button><button onClick={() => { setProfileMenu(false); logout.mutate(); }} className="logout-button"><LogOut size={15} /> Logout</button></div></>}</div></div></header>
+      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14} /><strong>{breadcrumb(location.pathname)}</strong></div></div><div className="topbar-actions"><button className="help-button" onClick={() => notify('Your expo workspace is ready to organize leads.')}><CircleHelp size={17} /><span>Help center</span></button><button className="icon-button notification-button" aria-label="Activity" onClick={() => navigate('/activity')}><Bell size={18} /><i /></button><div className="profile-menu-container"><button className="avatar avatar-top" onClick={() => setProfileMenu(!profileMenu)}>{initials(user.name)}</button>{profileMenu && <><div className="dropdown-overlay" onClick={() => setProfileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} /><div className="profile-dropdown"><div className="profile-dropdown-header"><strong>{user.name}</strong><small>{user.email}</small></div><button onClick={() => { setProfileMenu(false); navigate('/customization'); }}><Settings size={15} /> Customization</button><button onClick={() => { setProfileMenu(false); logout.mutate(); }} className="logout-button"><LogOut size={15} /> Logout</button></div></>}</div></div></header>
       <div className="page-area"><Outlet context={{ user, install: () => void install() }} /></div>
       <nav className="bottom-nav">{mainNav.slice(0, 4).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => isActive ? 'bottom-item active' : 'bottom-item'}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
     </main>
   </div>
 }
 
-function breadcrumb(path: string) { if (path === '/') return 'Overview'; if (path.startsWith('/expos/')) return 'Expo workspace'; if (path.startsWith('/expos')) return 'Expos'; if (path.startsWith('/leads/')) return 'Lead details'; if (path.startsWith('/leads')) return 'All leads'; if (path.startsWith('/activity')) return 'Activity'; return 'Workspace' }
+function breadcrumb(path: string) { if (path === '/') return 'Overview'; if (path.startsWith('/expos/')) return 'Expo workspace'; if (path.startsWith('/expos')) return 'Expos'; if (path.startsWith('/leads/')) return 'Lead details'; if (path.startsWith('/leads')) return 'All leads'; if (path.startsWith('/activity')) return 'Activity'; if (path.startsWith('/customization')) return 'Customization'; return 'Workspace' }
 
 const googleAuthErrors = new Map<string, string>([
   ['google_not_configured', 'Google sign-in setup is incomplete. Add the Google OAuth keys to Vercel.'],
@@ -78,20 +90,90 @@ const googleAuthErrors = new Map<string, string>([
   ['google_state_invalid', 'This Google sign-in link expired. Please try again.'],
   ['google_email_unverified', 'Google could not confirm this email address.'],
   ['google_account_conflict', 'This Google account is already linked to a different account.'],
-  ['google_workspace_exists', 'An account already exists for this workspace. Use its sign-in method.'],
   ['google_failed', 'Google sign-in failed. Please try again.'],
 ])
 
-function AuthPage({ setup }: { setup: boolean }) {
+function AuthPage() {
+  const [mode, setMode] = useState<'signup' | 'login'>('signup')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [searchParams] = useSearchParams()
   const [error, setError] = useState(() => googleAuthErrors.get(searchParams.get('authError') || '') || '')
   const client = useQueryClient()
-  const mutation = useMutation({ mutationFn: () => api('/auth/' + (setup ? 'register' : 'login'), json('POST', setup ? { name, email, password } : { email, password })), onSuccess: () => { void client.invalidateQueries({ queryKey: ['session'] }) }, onError: (e: Error) => setError(e.message) })
+  const setup = mode === 'signup'
+  const mutation = useMutation({
+    mutationFn: () => api('/auth/' + (setup ? 'register' : 'login'), json('POST', setup ? { name, email, password } : { email, password })),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['session'] }) },
+    onError: (e: Error) => setError(e.message),
+  })
   const submit = (e: FormEvent) => { e.preventDefault(); setError(''); mutation.mutate() }
-  return <div className="auth-page"><div className="auth-decoration"><div className="auth-orbit one" /><div className="auth-orbit two" /><div className="auth-brand"><img src="/expo-mark.svg" alt="" /><span>Exhibity</span></div><span className="auth-illustration"><img src="/expo-mark.svg" alt="Exhibity" /></span><div className="auth-quote"><span className="eyebrow">YOUR NEXT CONVERSATION STARTS HERE</span><h2>Turn every expo<br />into an opportunity.</h2><p>All your event leads, follow-ups and relationships in one calm workspace.</p><div className="auth-feature"><span><Check size={15} /></span>Built for the exhibition floor</div></div></div><section className="auth-form-wrap"><div className="auth-mobile-brand"><span className="brand-mark"><Building2 size={19} /></span> Exhibity</div><div className="auth-form"><span className="eyebrow">{setup ? 'CREATE ACCOUNT' : 'WELCOME BACK'}</span><h1>{setup ? 'Sign up for Exhibity' : 'Sign in to Exhibity'}</h1><p>{setup ? 'Create your account to start your private expo lead workspace.' : 'Pick up where your team left off.'}</p><form onSubmit={submit}>{setup && <label>Your name<input autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Krish Rami" /></label>}<label>Email address<input autoComplete="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></label><label>Password<input autoComplete={setup ? 'new-password' : 'current-password'} type="password" minLength={setup ? 10 : 1} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={setup ? 'At least 10 characters' : 'Your password'} /></label>{error && <p className="form-error">{error}</p>}<button className="button primary full" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle size={17} className="spin" /> : setup ? 'Create account' : 'Sign in'}<ArrowUpRight size={17} /></button><div className="auth-separator"><span>or continue with</span></div><a href="/api/auth/google/start" className="button secondary full google-btn"><svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>Continue with Google</a></form><p className="auth-note"><ShieldCheck size={15} /> Your data stays private to your workspace.</p></div><span className="auth-version">EXHIBITY · WEB APP</span></section></div>
+  const changeMode = (next: 'signup' | 'login') => { setMode(next); setError('') }
+
+  return <div className="auth-page">
+    <div className="auth-decoration">
+      <div className="auth-orbit one" /><div className="auth-orbit two" />
+      <div className="auth-brand"><img src="/expo-mark.svg" alt="" /><span>Exhibity</span></div>
+      <span className="auth-illustration"><img src="/expo-mark.svg" alt="Exhibity" /></span>
+      <div className="auth-quote"><span className="eyebrow">YOUR NEXT CONVERSATION STARTS HERE</span><h2>Turn every expo<br />into an opportunity.</h2><p>All your event leads, follow-ups and relationships in one calm workspace.</p><div className="auth-feature"><span><Check size={15} /></span>Built for the exhibition floor</div></div>
+    </div>
+    <section className="auth-form-wrap">
+      <div className="auth-mobile-brand"><span className="brand-mark"><Building2 size={19} /></span> Exhibity</div>
+      <div className="auth-form">
+        <span className="eyebrow">{setup ? 'CREATE ACCOUNT' : 'WELCOME BACK'}</span>
+        <h1>{setup ? 'Sign up for Exhibity' : 'Sign in to Exhibity'}</h1>
+        <p>{setup ? 'Create your private expo lead workspace.' : 'Pick up where you left off.'}</p>
+        <div className="auth-mode-tabs" role="tablist" aria-label="Account access">
+          <button type="button" role="tab" aria-selected={setup} className={setup ? 'selected' : ''} onClick={() => changeMode('signup')}>Sign up</button>
+          <button type="button" role="tab" aria-selected={!setup} className={!setup ? 'selected' : ''} onClick={() => changeMode('login')}>Log in</button>
+        </div>
+        <form onSubmit={submit}>
+          {setup && <label>Your name<input autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Krish Rami" /></label>}
+          <label>Email address<input autoComplete="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></label>
+          <label>Password<input autoComplete={setup ? 'new-password' : 'current-password'} type="password" minLength={setup ? 10 : 1} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={setup ? 'At least 10 characters' : 'Your password'} /></label>
+          {error && <p className="form-error">{error}</p>}
+          <button className="button primary full" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle size={17} className="spin" /> : setup ? 'Create account' : 'Sign in'}<ArrowUpRight size={17} /></button>
+          <div className="auth-separator"><span>or continue with</span></div>
+          <a href="/api/auth/google/start" className="button secondary full google-btn"><svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A11 11 0 0 0 1 12c0 1.78.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>Continue with Google</a>
+        </form>
+        <p className="auth-note"><ShieldCheck size={15} /> Your data stays private to your workspace.</p>
+      </div>
+      <span className="auth-version">EXHIBITY · WEB APP</span>
+    </section>
+  </div>
+}
+function CustomizationPage() {
+  const queryClient = useQueryClient()
+  const settings = useQuery({ queryKey: ['preferences'], queryFn: () => api<CustomizationPreferences>('/preferences') })
+  const save = useMutation({
+    mutationFn: (preferences: CustomizationPreferences) => api<CustomizationPreferences>('/preferences', json('PATCH', preferences)),
+    onSuccess: (preferences) => { queryClient.setQueryData(['preferences'], preferences); applyCustomization(preferences); notify('Appearance saved') },
+    onError: (error: Error) => { applyCustomization(settings.data || defaultCustomization); notify(error.message, 'error') },
+  })
+  const preferences = settings.data || defaultCustomization
+  const update = (next: CustomizationPreferences) => { applyCustomization(next); save.mutate(next) }
+  if (settings.isLoading) return <div className="page-content"><LoadingRows /></div>
+  if (settings.isError || !settings.data) return <div className="page-content"><ErrorPanel message="Could not load your appearance settings." /><button className="button secondary small" onClick={() => void settings.refetch()}>Try again</button></div>
+  return <div className="page-content customization-page">
+    <div className="page-title-row"><div><span className="eyebrow">YOUR WORKSPACE</span><h1>Make it yours</h1><p>Choose the look and spacing that feels right. These settings follow your account.</p></div><span className="customization-title-icon"><Sparkles size={20} /></span></div>
+    <div className="customization-grid">
+      <section className="panel customization-panel accent-panel">
+        <div className="section-heading"><div><span className="eyebrow">COLOR</span><h2>Accent color</h2></div><span className="customization-current-dot" style={{ backgroundColor: customizationThemes.find((theme) => theme.id === preferences.accent)?.color }} /></div>
+        <p className="customization-copy">Personalize buttons, active navigation and highlights.</p>
+        <div className="accent-options">{customizationThemes.map((theme) => <button key={theme.id} type="button" className={`accent-option ${preferences.accent === theme.id ? 'selected' : ''}`} aria-pressed={preferences.accent === theme.id} disabled={save.isPending} onClick={() => update({ ...preferences, accent: theme.id })}><span className="accent-swatch" style={{ backgroundColor: theme.color }}>{preferences.accent === theme.id && <Check size={15} />}</span><span><strong>{theme.label}</strong><small>{theme.description}</small></span><span className="accent-radio" /></button>)}</div>
+      </section>
+      <section className="panel customization-panel density-panel">
+        <div className="section-heading"><div><span className="eyebrow">LAYOUT</span><h2>Content spacing</h2></div></div>
+        <p className="customization-copy">Control how much fits on your screen.</p>
+        <div className="density-options"><button type="button" className={`density-option ${preferences.density === 'comfortable' ? 'selected' : ''}`} aria-pressed={preferences.density === 'comfortable'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'comfortable' })}><span className="density-preview comfortable-preview"><i /><i /><i /></span><strong>Comfortable</strong><small>More breathing room</small></button><button type="button" className={`density-option ${preferences.density === 'compact' ? 'selected' : ''}`} aria-pressed={preferences.density === 'compact'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'compact' })}><span className="density-preview compact-preview"><i /><i /><i /><i /></span><strong>Compact</strong><small>See more at once</small></button></div>
+      </section>
+      <section className="panel customization-preview-panel">
+        <div className="section-heading"><div><span className="eyebrow">PREVIEW</span><h2>Your workspace</h2></div><span className="preview-live"><i /> Live</span></div>
+        <div className="customization-preview"><div className="preview-sidebar"><span className="preview-logo"><Building2 size={14} /></span><span className="preview-nav active"><LayoutDashboard size={13} />Overview</span><span className="preview-nav"><Building2 size={13} />Expos</span><span className="preview-nav"><Users size={13} />All leads</span></div><div className="preview-main"><div className="preview-topline"><span /><span /></div><div className="preview-stat-row"><span /><span /><span /></div><button className="button primary small" type="button"><Plus size={13} />Add expo</button><div className="preview-row"><span /><span /><i /></div><div className="preview-row"><span /><span /><i /></div></div></div>
+      </section>
+    </div>
+    <div className="customization-footer"><span>{save.isPending ? <><LoaderCircle size={14} className="spin" /> Saving your appearance…</> : 'Your appearance is saved to your account.'}</span><button className="button secondary small" type="button" disabled={save.isPending || (preferences.accent === defaultCustomization.accent && preferences.density === defaultCustomization.density)} onClick={() => update(defaultCustomization)}>Reset to default</button></div>
+  </div>
 }
 
 function Dashboard() {

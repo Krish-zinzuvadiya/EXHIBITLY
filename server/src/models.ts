@@ -5,6 +5,13 @@ const userSchema = new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   passwordHash: { type: String },
   googleId: { type: String, trim: true, unique: true, sparse: true },
+  preferences: {
+    type: new Schema({
+      accent: { type: String, enum: ['ember', 'ocean', 'forest', 'plum', 'slate'], default: 'ember' },
+      density: { type: String, enum: ['comfortable', 'compact'], default: 'comfortable' },
+    }, { _id: false }),
+    default: () => ({}),
+  },
 }, { timestamps: true })
 
 const expoSchema = new Schema({

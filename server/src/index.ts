@@ -50,7 +50,7 @@ const getOwnedExpo = (expoId: string, userId: string) => Expo.findOne({ _id: exp
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 }))
 
-app.get('/api/auth/registration-open', asyncRoute(async (_req, res) => res.json({ open: (await User.countDocuments()) === 0 })))
+app.get('/api/auth/registration-open', (_req, res) => res.json({ open: true }))
 app.get('/api/auth/google/start', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
@@ -129,7 +129,6 @@ app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
         user.googleId = profile.sub
         await user.save()
       } else {
-        if (await User.exists({})) return redirectGoogleError(res, 'google_workspace_exists')
         try {
           user = await User.create({
             name: profile.name?.trim() || email.split('@')[0],
@@ -160,11 +159,15 @@ app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
 app.post('/api/auth/register', asyncRoute(async (req, res) => {
   const parsed = z.object({ name: z.string().trim().min(1).max(100), email: z.string().trim().email().max(254), password: z.string().min(10).max(128) }).safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ message: 'Enter your name, a valid email and a password with at least 10 characters.' })
-  if (await User.exists({})) return res.status(403).json({ message: 'Workspace setup is already complete. Sign in instead.' })
   const { name, email, password } = parsed.data
-  const user = await User.create({ name, email, passwordHash: await bcrypt.hash(password, 12) })
-  issueSession(res, String(user._id))
-  return res.status(201).json({ user: { id: user._id, name: user.name, email: user.email } })
+  try {
+    const user = await User.create({ name, email: email.toLowerCase(), passwordHash: await bcrypt.hash(password, 12) })
+    issueSession(res, String(user._id))
+    return res.status(201).json({ user: { id: user._id, name: user.name, email: user.email } })
+  } catch (error) {
+    if ((error as { code?: number }).code === 11000) return res.status(409).json({ message: 'An account already uses this email. Sign in instead.' })
+    throw error
+  }
 }))
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const parsed = z.object({ email: z.string().trim().email(), password: z.string().min(1) }).safeParse(req.body)
@@ -179,6 +182,21 @@ app.get('/api/auth/me', auth, asyncRoute(async (req, res) => {
   const user = await User.findById(req.userId).select('name email')
   if (!user) return res.status(401).json({ message: 'Account not found.' })
   return res.json({ user: { id: user._id, name: user.name, email: user.email } })
+}))
+
+const appearanceSchema = z.object({ accent: z.enum(['ember', 'ocean', 'forest', 'plum', 'slate']), density: z.enum(['comfortable', 'compact']) })
+const defaultAppearance = { accent: 'ember' as const, density: 'comfortable' as const }
+app.get('/api/preferences', auth, asyncRoute(async (req, res) => {
+  const user = await User.findById(req.userId).select('preferences').lean()
+  if (!user) return res.status(404).json({ message: 'Account not found.' })
+  return res.json({ ...defaultAppearance, ...user.preferences })
+}))
+app.patch('/api/preferences', auth, asyncRoute(async (req, res) => {
+  const parsed = appearanceSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Choose a valid accent and layout density.' })
+  const user = await User.findByIdAndUpdate(req.userId, { $set: { preferences: parsed.data } }, { new: true }).select('preferences').lean()
+  if (!user) return res.status(404).json({ message: 'Account not found.' })
+  return res.json({ ...defaultAppearance, ...user.preferences })
 }))
 
 app.get('/api/dashboard', auth, asyncRoute(async (req, res) => {
