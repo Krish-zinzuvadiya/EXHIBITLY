@@ -11,8 +11,9 @@ import { z } from 'zod'
 import { Activity, Expo, Lead, User } from './models.js'
 
 const app = express()
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured in production.')
-if (process.env.NODE_ENV === 'production' && !process.env.MONGODB_URI) throw new Error('MONGODB_URI must be configured in production.')
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'
+if (isProduction && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured in production.')
+if (isProduction && !process.env.MONGODB_URI) throw new Error('MONGODB_URI must be configured in production.')
 const jwtSecret = process.env.JWT_SECRET || 'local-development-secret-change-before-deploying'
 const statuses = ['interested', 'called', 'not-interested', 'good-presence'] as const
 type LeadStatus = typeof statuses[number]
@@ -37,7 +38,7 @@ const auth = (req: AuthedRequest, res: Response, next: NextFunction) => {
 }
 const userOnly = (req: AuthedRequest) => ({ userId: req.userId })
 const isStatus = (value: unknown): value is LeadStatus => statuses.includes(value as LeadStatus)
-const cookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/' }
+const cookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: isProduction, path: '/' }
 const issueSession = (res: Response, userId: string) => res.cookie('expo_session', jwt.sign({}, jwtSecret, { subject: userId, expiresIn: '7d' }), { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 })
 const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next)
 const recordActivity = (userId: string, description: string, fields: { action: string; expoId?: Types.ObjectId | string; leadId?: Types.ObjectId | string; metadata?: object }) => Activity.create({ userId, description, ...fields })
