@@ -55,6 +55,18 @@ app.get('/api/auth/google/start', (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
   if (!clientId || !clientSecret) return redirectGoogleError(res, 'google_not_configured')
+  let linkUserId: string | undefined
+  if (req.query.link === '1') {
+    const sessionToken = req.cookies?.expo_session as string | undefined
+    try {
+      const claims = sessionToken ? jwt.verify(sessionToken, jwtSecret) as jwt.JwtPayload : null
+      if (typeof claims?.sub !== 'string') return redirectGoogleError(res, 'google_link_signin_required')
+      linkUserId = claims.sub
+    } catch { return redirectGoogleError(res, 'google_link_signin_required') }
+    res.cookie('google_oauth_link_user', linkUserId, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+  } else {
+    res.clearCookie('google_oauth_link_user', oauthCookieOptions)
+  }
 
   const state = randomBytes(32).toString('base64url')
   const codeVerifier = randomBytes(48).toString('base64url')
@@ -80,8 +92,10 @@ app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
   const state = typeof req.query.state === 'string' ? req.query.state : ''
   const savedState = req.cookies?.google_oauth_state as string | undefined
   const codeVerifier = req.cookies?.google_oauth_verifier as string | undefined
+  const linkUserId = req.cookies?.google_oauth_link_user as string | undefined
   res.clearCookie('google_oauth_state', oauthCookieOptions)
   res.clearCookie('google_oauth_verifier', oauthCookieOptions)
+  res.clearCookie('google_oauth_link_user', oauthCookieOptions)
 
   const stateBuffer = Buffer.from(state)
   const savedStateBuffer = Buffer.from(savedState || '')
@@ -121,11 +135,31 @@ app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
     if (!profile.sub || !profile.email || profile.email_verified !== true) return redirectGoogleError(res, 'google_email_unverified')
 
     const email = profile.email.trim().toLowerCase()
+    if (linkUserId) {
+      const sessionToken = req.cookies?.expo_session as string | undefined
+      let sessionUserId = ''
+      try {
+        const claims = sessionToken ? jwt.verify(sessionToken, jwtSecret) as jwt.JwtPayload : null
+        sessionUserId = typeof claims?.sub === 'string' ? claims.sub : ''
+      } catch { return redirectGoogleError(res, 'google_link_signin_required') }
+      if (!sessionUserId || sessionUserId !== linkUserId) return redirectGoogleError(res, 'google_link_signin_required')
+      const account = await User.findById(linkUserId)
+      if (!account) return redirectGoogleError(res, 'google_link_signin_required')
+      if (account.email !== email) return redirectGoogleError(res, 'google_link_email_mismatch')
+      if (account.googleId && account.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+      const linkedAccount = await User.findOne({ googleId: profile.sub })
+      if (linkedAccount && String(linkedAccount._id) !== String(account._id)) return redirectGoogleError(res, 'google_account_conflict')
+      account.googleId = profile.sub
+      await account.save()
+      issueSession(res, String(account._id))
+      return res.redirect('/')
+    }
     let user = await User.findOne({ googleId: profile.sub })
     if (!user) {
       user = await User.findOne({ email })
       if (user) {
         if (user.googleId && user.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+        if (user.passwordHash) return redirectGoogleError(res, 'google_account_link_required')
         user.googleId = profile.sub
         await user.save()
       } else {
@@ -179,9 +213,9 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
 }))
 app.post('/api/auth/logout', (_req, res) => res.clearCookie('expo_session', cookieOptions).json({ ok: true }))
 app.get('/api/auth/me', auth, asyncRoute(async (req, res) => {
-  const user = await User.findById(req.userId).select('name email')
+  const user = await User.findById(req.userId).select('name email googleId passwordHash')
   if (!user) return res.status(401).json({ message: 'Account not found.' })
-  return res.json({ user: { id: user._id, name: user.name, email: user.email } })
+  return res.json({ user: { id: user._id, name: user.name, email: user.email, googleConnected: Boolean(user.googleId), passwordLogin: Boolean(user.passwordHash) } })
 }))
 
 const appearanceSchema = z.object({ accent: z.enum(['ember', 'ocean', 'forest', 'plum', 'slate']), density: z.enum(['comfortable', 'compact']) })

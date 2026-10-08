@@ -107,4 +107,15 @@
 .tab-button.active{color:var(--accent-ink)}
 .tab-button.active::after{background:var(--orange)}
 .search-box:focus-within{border-color:var(--orange);box-shadow:0 0 0 3px color-mix(in srgb,var(--orange) 7%,transparent)}
-.form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus{border-color:var(--orange);box-shadow:0 0 0 3px color-mix(in srgb,var(--orange) 7%,transparent)}
+.form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus{border-color:var(--orange);box-shadow:0 0 0 3px color-mix(in srgb,var(--orange) 7%,transparent)}.account-panel .customization-copy{margin-bottom:12px}
+.account-shield{color:var(--accent-ink)}
+.account-method-row{display:flex;align-items:center;gap:9px;padding:10px;border:1px solid #eeebe5;border-radius:10px;background:#fff}
+.account-method-icon{width:30px;height:30px;flex:0 0 auto;display:grid;place-items:center;border-radius:9px;background:#f2f0ec;color:#77736d}
+.account-method-icon.connected{color:#378b69;background:#eaf6ef}
+.account-method-row>span:nth-child(2){min-width:0;flex:1}
+.account-method-row strong,.account-method-row small{display:block}
+.account-method-row strong{font-size:9px}
+.account-method-row small{margin-top:3px;color:#8d8880;font-size:8px}
+.account-connected{display:flex;align-items:center;gap:4px;color:#3b8a62;font-size:8px;font-weight:600}
+.account-connect{min-height:30px}
+.account-method-note{display:block;margin-top:9px;color:#918c84;font-size:8px;line-height:1.5}

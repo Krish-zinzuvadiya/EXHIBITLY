@@ -90,6 +90,9 @@ const googleAuthErrors = new Map<string, string>([
   ['google_state_invalid', 'This Google sign-in link expired. Please try again.'],
   ['google_email_unverified', 'Google could not confirm this email address.'],
   ['google_account_conflict', 'This Google account is already linked to a different account.'],
+  ['google_account_link_required', 'Sign in with your password first, then connect Google from Customization.'],
+  ['google_link_signin_required', 'Sign in to Exhibity before connecting a Google account.'],
+  ['google_link_email_mismatch', 'Choose the same Google email used for this Exhibity account.'],
   ['google_failed', 'Google sign-in failed. Please try again.'],
 ])
 
@@ -143,6 +146,7 @@ function AuthPage() {
   </div>
 }
 function CustomizationPage() {
+  const { user } = useOutletContext<{ user: User }>()
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['preferences'], queryFn: () => api<CustomizationPreferences>('/preferences') })
   const save = useMutation({
@@ -166,6 +170,12 @@ function CustomizationPage() {
         <div className="section-heading"><div><span className="eyebrow">LAYOUT</span><h2>Content spacing</h2></div></div>
         <p className="customization-copy">Control how much fits on your screen.</p>
         <div className="density-options"><button type="button" className={`density-option ${preferences.density === 'comfortable' ? 'selected' : ''}`} aria-pressed={preferences.density === 'comfortable'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'comfortable' })}><span className="density-preview comfortable-preview"><i /><i /><i /></span><strong>Comfortable</strong><small>More breathing room</small></button><button type="button" className={`density-option ${preferences.density === 'compact' ? 'selected' : ''}`} aria-pressed={preferences.density === 'compact'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'compact' })}><span className="density-preview compact-preview"><i /><i /><i /><i /></span><strong>Compact</strong><small>See more at once</small></button></div>
+      </section>
+      <section className="panel customization-panel account-panel">
+        <div className="section-heading"><div><span className="eyebrow">ACCOUNT</span><h2>Sign-in options</h2></div><ShieldCheck size={17} className="account-shield" /></div>
+        <p className="customization-copy">Manage how you access {user.email}.</p>
+        <div className="account-method-row"><span className={`account-method-icon ${user.googleConnected ? 'connected' : ''}`}><Building2 size={16} /></span><span><strong>Google sign-in</strong><small>{user.googleConnected ? 'Connected to this account' : 'Not connected yet'}</small></span>{user.googleConnected ? <span className="account-connected"><Check size={13} />Connected</span> : <a className="button secondary small account-connect" href="/api/auth/google/start?link=1">Connect</a>}</div>
+        <small className="account-method-note">To link Google to an existing account, sign in with the same email first.</small>
       </section>
       <section className="panel customization-preview-panel">
         <div className="section-heading"><div><span className="eyebrow">PREVIEW</span><h2>Your workspace</h2></div><span className="preview-live"><i /> Live</span></div>
