@@ -33,3 +33,102 @@
   justify-content: center;
   overflow: hidden;
 }
+
+/* Give the sign-in welcome panel the same complete brand mark as the app. */
+.auth-decoration::before {
+  z-index: 0;
+}
+
+.auth-decoration::after {
+  z-index: 1;
+  opacity: 0.08;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, transparent, #000 20%, #000 80%, transparent);
+}
+
+.auth-orbit {
+  z-index: 1;
+}
+
+.auth-brand {
+  position: absolute;
+  z-index: 2;
+  top: 38px;
+  left: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -0.4px;
+}
+
+.auth-brand img {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow: 0 5px 16px #1115;
+}
+
+.auth-illustration {
+  z-index: 2;
+  transform: none;
+}
+
+.auth-illustration img {
+  display: block;
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  object-fit: contain;
+  box-shadow: 0 8px 24px #1115;
+}
+
+.auth-quote {
+  z-index: 2;
+}
+
+@media (max-width: 760px) {
+  .auth-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth-decoration {
+    display: none;
+  }
+}
+
+/* Keep each expo's wide logo contained inside its banner. */
+.expo-art {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.expo-art .expo-logo-mark.card {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  width: auto;
+  height: auto;
+  padding: 14px 58px;
+  place-items: center;
+  overflow: hidden;
+}
+
+.expo-art .expo-logo-mark.card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain !important;
+  object-position: center;
+}
+
+.expo-art .art-index {
+  z-index: 3;
+}
