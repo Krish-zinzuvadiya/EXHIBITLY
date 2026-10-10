@@ -305,9 +305,9 @@ app.post('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
   const expo = await getOwnedExpo(expoId, req.userId!)
   if (!expo) return res.status(404).json({ message: 'Expo not found.' })
   const parsed = leadSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'A lead name is required. Check the details and try again.' })
+  if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
   const lead = await Lead.create({ ...parsed.data, ...userOnly(req), expoId: expo._id, source: parsed.data.source || 'Manual entry' })
-  await recordActivity(req.userId!, `Added ${lead.personName} to ${expo.name}`, { action: 'lead.created', expoId: expo._id, leadId: lead._id })
+  await recordActivity(req.userId!, `Added ${lead.personName || lead.companyName || 'a lead'} to ${expo.name}`, { action: 'lead.created', expoId: expo._id, leadId: lead._id })
   return res.status(201).json(lead)
 }))
 app.get('/api/leads', auth, asyncRoute(async (req, res) => {
@@ -323,17 +323,17 @@ app.get('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
 app.put('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
   const parsed = leadSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'A lead name is required. Check the details and try again.' })
+  if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
   const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true })
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
-  await recordActivity(req.userId!, `Updated ${lead.personName}`, { action: 'lead.updated', expoId: lead.expoId, leadId: lead._id })
+  await recordActivity(req.userId!, `Updated ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.updated', expoId: lead.expoId, leadId: lead._id })
   return res.json(lead)
 }))
 app.patch('/api/leads/:leadId/status', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId)) || !isStatus(req.body.status)) return res.status(400).json({ message: 'Choose a valid lead status.' })
   const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, { status: req.body.status }, { new: true })
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
-  await recordActivity(req.userId!, `${lead.personName} moved to ${statusLabel(lead.status)}`, { action: 'lead.status', expoId: lead.expoId, leadId: lead._id, metadata: { status: lead.status } })
+  await recordActivity(req.userId!, `${lead.personName || lead.companyName || 'A lead'} moved to ${statusLabel(lead.status)}`, { action: 'lead.status', expoId: lead.expoId, leadId: lead._id, metadata: { status: lead.status } })
   return res.json(lead)
 }))
 app.post('/api/leads/bulk-status', auth, asyncRoute(async (req, res) => {
@@ -347,7 +347,7 @@ app.delete('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
   const lead = await Lead.findOneAndDelete({ _id: param(req.params.leadId), ...userOnly(req) })
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
-  await recordActivity(req.userId!, `Deleted ${lead.personName}`, { action: 'lead.deleted', expoId: lead.expoId })
+  await recordActivity(req.userId!, `Deleted ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.deleted', expoId: lead.expoId })
   return res.json({ ok: true })
 }))
 
@@ -386,7 +386,7 @@ app.post('/api/expos/:expoId/import/preview', auth, memoryUpload.single('file'),
   const seenInFile = new Set<string>()
   const preview = mapped.map((row, index) => {
     const parsed = leadSchema.safeParse(row)
-    if (!parsed.success || !row.personName?.trim()) { invalid++; return { rowNumber: index + 2, data: row, issue: row.personName?.trim() ? 'Check field format' : 'Name is required', duplicate: false, valid: false } }
+    if (!parsed.success || !(row.companyName?.trim() || row.personName?.trim())) { invalid++; return { rowNumber: index + 2, data: row, issue: row.companyName?.trim() || row.personName?.trim() ? 'Check field format' : 'Company or contact name is required', duplicate: false, valid: false } }
     const keys = duplicateKeys(row)
     const duplicate = keys.some((key) => duplicateSet.has(key) || seenInFile.has(key))
     if (duplicate) duplicates++
@@ -400,7 +400,7 @@ app.get('/api/expos/:expoId/import/template', auth, asyncRoute(async (req, res) 
   const expo = objectId(expoId) ? await getOwnedExpo(expoId, req.userId!) : null
   if (!expo) return res.status(404).json({ message: 'Expo not found.' })
   const workbook = XLSX.utils.book_new()
-  const sheet = XLSX.utils.aoa_to_sheet([['Date Visited', 'Company Name', 'Business Category (Optional)', 'Person Name', 'Designation', 'Number', 'Other Numbers', 'Email', 'Website', 'Social Media Platform', 'Social Media Link']])
+  const sheet = XLSX.utils.aoa_to_sheet([['Date Visited', 'Company Name', 'Category', 'Contact Person', 'Designation', 'Mobile Number 1', 'Other Mobile Numbers', 'Email', 'Website', 'Social Media Platform', 'Social Media Link', 'LinkedIn', 'Instagram', 'Facebook', 'YouTube']])
   XLSX.utils.book_append_sheet(workbook, sheet, 'Leads')
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -438,7 +438,7 @@ app.post('/api/expos/:expoId/import', auth, memoryUpload.single('file'), asyncRo
   let duplicates = 0, invalid = 0
   for (const raw of mappedRows) {
     const checked = leadSchema.safeParse(raw)
-    if (!checked.success || !checked.data.personName.trim()) { invalid++; continue }
+    if (!checked.success || !(checked.data.companyName?.trim() || checked.data.personName?.trim())) { invalid++; continue }
     const rowKeys = duplicateKeys(checked.data)
     if (rowKeys.some((key) => keys.has(key))) { duplicates++; continue }
     rowKeys.forEach((key) => keys.add(key))
@@ -481,12 +481,23 @@ app.post('/api/expos/:expoId/export', auth, asyncRoute(async (req, res) => {
   if (parsed.data.statuses?.length) filter.status = { $in: parsed.data.statuses }
   if (parsed.data.leadIds?.length) filter._id = { $in: parsed.data.leadIds }
   const leads = await Lead.find(filter).sort({ createdAt: -1 }).lean()
-  const rows = leads.map(({ visitDate, companyName, businessCategory, personName, designation, primaryPhone, otherPhones, email, website, socialPlatform, socialProfile, socialMedia, status, notes }) => {
-    const legacySocial = Object.entries(socialMedia || {}).find(([, value]) => value)
-    return { 'Date Visited': visitDate ? new Date(visitDate).toISOString().slice(0, 10) : '', 'Company Name': companyName, 'Business Category (Optional)': businessCategory, 'Person Name': personName, Designation: designation, Number: primaryPhone, 'Other Numbers': otherPhones.join(', '), Email: email, Website: website, 'Social Media Platform': socialPlatform || legacySocial?.[0], 'Social Media Link': socialProfile || legacySocial?.[1], Status: statusLabel(status), Notes: notes, LinkedIn: socialMedia?.linkedin, Instagram: socialMedia?.instagram, Facebook: socialMedia?.facebook, YouTube: socialMedia?.youtube }
-  })
+  const exportHeaders = ['Date', 'Company Name', 'Contact Person Name', 'Mobile', 'Email', 'Landline', 'Website', 'Service', 'Category', 'Budget', 'Source', 'Status']
+  const rows = leads.map(({ visitDate, createdAt, companyName, personName, primaryPhone, otherPhones, email, website }) => ({
+    Date: new Date(visitDate || createdAt).toISOString().slice(0, 10),
+    'Company Name': companyName || '',
+    'Contact Person Name': personName || '',
+    Mobile: [primaryPhone, ...(otherPhones || [])].filter(Boolean).join(', '),
+    Email: email || '',
+    Landline: '',
+    Website: website || '',
+    Service: '',
+    Category: '',
+    Budget: '',
+    Source: 'Expo',
+    Status: '',
+  }))
   const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), 'Leads')
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows, { header: exportHeaders }), 'Leads')
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
   const filename = `${expo.name.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}_Leads.xlsx`
   await recordActivity(req.userId!, `Exported ${leads.length} leads from ${expo.name}`, { action: 'lead.exported', expoId: expo._id, metadata: { count: leads.length } })
@@ -503,7 +514,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 })
 
 const expoSchema = z.object({ name: z.string().trim().min(1).max(160), startDate: z.coerce.date().optional().or(z.literal('')), endDate: z.coerce.date().optional().or(z.literal('')), venue: z.string().max(180).optional(), city: z.string().max(120).optional(), organizer: z.string().max(180).optional(), website: z.string().max(300).optional(), description: z.string().max(2000).optional(), notes: z.string().max(5000).optional() }).transform((data) => ({ ...data, startDate: data.startDate || undefined, endDate: data.endDate || undefined }))
-const leadSchema = z.object({ personName: z.string().trim().min(1).max(160), visitDate: z.coerce.date().optional().or(z.literal('')), companyName: z.string().max(180).optional(), designation: z.string().max(160).optional(), primaryPhone: z.string().max(40).optional(), otherPhones: z.array(z.string().max(40)).max(30).optional(), email: z.union([z.string().email().max(254), z.literal('')]).optional(), website: z.string().max(300).optional(), socialPlatform: z.string().max(80).optional(), socialProfile: z.string().max(300).optional(), socialMedia: z.object({ linkedin: z.string().max(300).optional(), instagram: z.string().max(300).optional(), facebook: z.string().max(300).optional(), youtube: z.string().max(300).optional(), other: z.string().max(300).optional() }).optional(), businessCategory: z.string().max(120).optional(), address: z.string().max(500).optional(), city: z.string().max(120).optional(), state: z.string().max(120).optional(), pincode: z.string().max(20).optional(), status: z.enum(statuses).optional().default('interested'), notes: z.string().max(5000).optional(), source: z.string().max(120).optional() }).transform((data) => ({ ...data, visitDate: data.visitDate || undefined, otherPhones: (data.otherPhones || []).filter(Boolean), email: data.email || '' }))
+const leadSchema = z.object({ personName: z.string().trim().max(160).optional(), visitDate: z.coerce.date().optional().or(z.literal('')), companyName: z.string().trim().max(180).optional(), designation: z.string().max(160).optional(), primaryPhone: z.string().max(40).optional(), otherPhones: z.array(z.string().max(40)).max(30).optional(), email: z.union([z.string().email().max(254), z.literal('')]).optional(), website: z.string().max(300).optional(), socialPlatform: z.string().max(80).optional(), socialProfile: z.string().max(300).optional(), socialMedia: z.object({ linkedin: z.string().max(300).optional(), instagram: z.string().max(300).optional(), facebook: z.string().max(300).optional(), youtube: z.string().max(300).optional(), other: z.string().max(300).optional() }).optional(), businessCategory: z.string().max(120).optional(), address: z.string().max(500).optional(), city: z.string().max(120).optional(), state: z.string().max(120).optional(), pincode: z.string().max(20).optional(), status: z.enum(statuses).optional().default('interested'), notes: z.string().max(5000).optional(), source: z.string().max(120).optional() }).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim()), { message: 'A company name or contact person is required.' }).transform((data) => ({ ...data, visitDate: data.visitDate || undefined, otherPhones: (data.otherPhones || []).filter(Boolean), email: data.email || '' }))
 
 function leadQuery(req: AuthedRequest, expoId?: string) {
   const page = Math.max(1, Number(req.query.page) || 1)
@@ -524,10 +535,10 @@ function leadQuery(req: AuthedRequest, expoId?: string) {
 }
 const columnAliases: Record<string, string[]> = {
   visitDate: ['visitdate', 'datevisited', 'dateofvisit', 'visitedon', 'visit', 'date'],
-  personName: ['personname', 'fullname', 'name', 'contactname'], companyName: ['companyname', 'company', 'businessname', 'organization'],
-  designation: ['designation', 'title', 'jobtitle'], primaryPhone: ['primaryphone', 'primarynumber', 'mobilenumber1', 'mobile', 'mobilenumber', 'phone', 'number', 'contactnumber'],
-  otherPhones: ['otherphones', 'alternatenumbers', 'alternatemobile', 'mobile2', 'mobilenumber2', 'alternatephone', 'otherphone'], otherPhones3: ['mobile3', 'mobilenumber3', 'phone2'], email: ['email', 'emailaddress'],
-  website: ['website', 'web', 'url'], socialPlatform: ['socialmediaplatform', 'socialmediaplatformifavailable', 'socialplatform', 'socialnetwork', 'socialmedia'], socialProfile: ['socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'], businessCategory: ['businesscategory', 'businesscategoryoptional', 'category', 'industry'], city: ['city', 'town'], state: ['state', 'region'],
+  personName: ['personname', 'fullname', 'contactperson', 'contactpersonname', 'contactpersonifavailable', 'contactname', 'name'], companyName: ['companyname', 'company', 'businessname', 'organization', 'business'],
+  designation: ['designation', 'designationifavailable', 'title', 'jobtitle', 'role'], primaryPhone: ['primaryphone', 'primarynumber', 'primarymobile', 'primarymobileno', 'primarymobilenumber', 'mobilenumber1', 'mobile1', 'mobileno1', 'mobile', 'mobileno', 'mobilenumber', 'phone1', 'phonenumber1', 'phone', 'number1', 'number', 'contactnumber1', 'contactnumber'],
+  otherPhones: ['otherphones', 'othernumbers', 'othermobilenumber', 'othermobilenumbers', 'othermobilenumberifavailable', 'othermobileno', 'othermobilenos', 'othernumber', 'alternatenumbers', 'alternatemobile', 'mobile2', 'mobilenumber2', 'alternatephone', 'otherphone'], otherPhones3: ['mobile3', 'mobilenumber3', 'phone2'], email: ['email', 'emailaddress', 'emailid', 'emailifavailable'],
+  website: ['website', 'websiteifavailable', 'web', 'url', 'companywebsite'], socialPlatform: ['socialmediaplatform', 'socialmediaplatformifavailable', 'socialplatform', 'socialnetwork'], socialProfile: ['socialmedia', 'socialmediaprofile', 'socialmediaifavailable', 'socialmediaifavailableoncard', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'], businessCategory: ['businesscategory', 'businesscategoryoptional', 'businesscategoryifavailable', 'category', 'categoryifavailable', 'categoryofbusiness', 'categoryofbusinessifavailable', 'industry'], city: ['city', 'town'], state: ['state', 'region'],
   pincode: ['pincode', 'zipcode', 'postalcode'], address: ['address', 'location'], notes: ['notes', 'note', 'remarks'], status: ['status', 'leadstatus'],
   linkedin: ['linkedin', 'linkedinurl'], instagram: ['instagram', 'instagramurl'], facebook: ['facebook', 'facebookurl'], youtube: ['youtube', 'youtubeurl'],
 }
@@ -561,7 +572,7 @@ function mapExcelRow(row: Record<string, unknown>, mapping: Record<string, strin
   const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizeColumn(key), String(value ?? '').trim()]))
   const pick = (field: string, ...aliases: string[]) => {
     const mappedColumn = mapping[field] ? normalized[normalizeColumn(mapping[field])] : undefined
-    return mappedColumn || aliases.map((key) => normalized[key]).find((value) => value !== undefined) || ''
+    return mappedColumn || (columnAliases[field] || aliases).map((key) => normalized[key]).find((value) => value !== undefined) || ''
   }
   const rawDate = mapping.visitDate ? row[mapping.visitDate] : Object.entries(row).find(([key]) => columnAliases.visitDate.includes(normalizeColumn(key)))?.[1]
   const rawStatus = pick('status', 'status', 'leadstatus').toLowerCase()
@@ -573,7 +584,7 @@ function mapExcelRow(row: Record<string, unknown>, mapping: Record<string, strin
     visitDate: excelVisitDate(rawDate), personName: pick('personName', 'personname', 'fullname', 'name', 'contactname'), companyName: pick('companyName', 'companyname', 'company', 'businessname', 'organization'), designation: pick('designation', 'designation', 'title', 'jobtitle'),
     primaryPhone: pick('primaryPhone', 'primaryphone', 'primarynumber', 'mobilenumber1', 'mobile', 'mobilenumber', 'phone', 'number', 'contactnumber'), otherPhones: extras,
     email: pick('email', 'email', 'emailaddress'), website: pick('website', 'website', 'web', 'url'), businessCategory: pick('businessCategory', 'businesscategory', 'category', 'industry'),
-    socialPlatform: pick('socialPlatform', 'socialmediaplatform', 'socialplatform', 'socialnetwork', 'socialmedia'), socialProfile: pick('socialProfile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'),
+    socialPlatform: pick('socialPlatform', 'socialmediaplatform', 'socialplatform', 'socialnetwork') || (pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink') ? 'Social media' : ''), socialProfile: pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'),
     socialMedia: { linkedin: pick('linkedin', 'linkedin', 'linkedinurl'), instagram: pick('instagram', 'instagram', 'instagramurl'), facebook: pick('facebook', 'facebook', 'facebookurl'), youtube: pick('youtube', 'youtube', 'youtubeurl') },
     city: pick('city', 'city', 'town'), state: pick('state', 'state', 'region'), pincode: pick('pincode', 'pincode', 'zipcode', 'postalcode'), address: pick('address', 'address', 'location'), notes: pick('notes', 'notes', 'note', 'remarks'), status, source: 'Excel import',
   }

@@ -31,7 +31,7 @@ expoSchema.index({ userId: 1, name: 1 })
 const leadSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   expoId: { type: Schema.Types.ObjectId, ref: 'Expo', required: true, index: true },
-  personName: { type: String, required: true, trim: true, maxlength: 160 },
+  personName: { type: String, trim: true, maxlength: 160 },
   visitDate: Date,
   companyName: { type: String, trim: true, maxlength: 180 },
   designation: { type: String, trim: true, maxlength: 160 },
