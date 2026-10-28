@@ -49,7 +49,7 @@ const leadSchema = new Schema({
   city: { type: String, trim: true, maxlength: 120 },
   state: { type: String, trim: true, maxlength: 120 },
   pincode: { type: String, trim: true, maxlength: 20 },
-  status: { type: String, enum: ['interested', 'called', 'not-interested', 'good-presence'], default: 'interested', index: true },
+  status: { type: String, enum: ['new', 'interested', 'called', 'not-interested', 'good-presence'], default: 'new', index: true },
   notes: { type: String, trim: true, maxlength: 5000 },
   source: { type: String, trim: true, maxlength: 120, default: 'Manual entry' },
 }, { timestamps: true })

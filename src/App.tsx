@@ -19,7 +19,7 @@ const expoLogoUrl = (website?: string) => {
     return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(site.origin)}&sz=256`
   } catch { return '' }
 }
-const statusLabel = (status: Status) => statuses.find((item) => item.value === status)?.label || 'Interested'
+const statusLabel = (status: Status) => statuses.find((item) => item.value === status)?.label || 'New Inquiry'
 const queryString = (values: Record<string, string | number | undefined>) => { const params = new URLSearchParams(); Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) }); return params.toString() }
 const initials = (name = '') => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'EL'
 const dateGreeting = () => { const hour = new Date().getHours(); return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening' }
@@ -197,16 +197,139 @@ function Dashboard() {
     <section className="stat-grid">{[
       { label: 'Total expos', value: stats?.expoCount ?? '—', detail: 'Your events', icon: Building2, tone: 'orange' },
       { label: 'Total leads', value: stats?.leadCount ?? '—', detail: 'Across all expos', icon: Users, tone: 'blue' },
-      { label: 'Interested', value: stats?.interested ?? '—', detail: 'Ready to follow up', icon: Zap, tone: 'green' },
+      { label: 'New inquiries', value: stats?.new ?? '—', detail: 'Fresh / uncontacted', icon: Sparkles, tone: 'orange' },
+      { label: 'Interested', value: stats?.interested ?? '—', detail: 'Ready to convert', icon: Zap, tone: 'green' },
       { label: 'Called', value: stats?.called ?? '—', detail: 'Conversation started', icon: Phone, tone: 'violet' },
-      { label: 'Not interested', value: stats?.notInterested ?? '—', detail: 'Closed out', icon: X, tone: 'red' },
-      { label: 'Good presence', value: stats?.goodPresence ?? '—', detail: 'Already represented', icon: CheckCircle2, tone: 'gray' },
+      { label: 'Already represented', value: stats?.goodPresence ?? '—', detail: 'Existing presence', icon: CheckCircle2, tone: 'gray' },
     ].map((stat) => <article className="stat-card" key={stat.label}><div className={`stat-icon ${stat.tone}`}><stat.icon size={18} /></div><div className="stat-heading"><span>{stat.label}</span><MoreHorizontal size={16} /></div><strong className="stat-value">{isLoading ? '…' : stat.value}</strong><span className="stat-detail"><i className={`detail-dot ${stat.tone}`} />{stat.detail}</span></article>)}</section>
     <div className="dashboard-columns"><section className="panel recent-panel"><div className="section-heading"><div><span className="eyebrow">YOUR EVENTS</span><h2>Recent expos</h2></div><Link className="text-link" to="/expos">View all <ArrowUpRight size={15} /></Link></div>{isLoading ? <LoadingRows /> : data?.expos.length ? <div className="recent-expos">{data.expos.slice(0, 4).map((expo, index) => <ExpoRow key={expo._id} expo={expo} index={index} onClick={() => navigate(`/expos/${expo._id}?tab=overview`)} />)}</div> : <EmptyState icon={<Building2 size={22} />} title="Your first expo is waiting" text="Create an expo to start collecting and organizing leads." action={<button className="button primary small" onClick={() => setExpoModal(true)}><Plus size={15} />Create expo</button>} />}</section>
       <section className="panel activity-panel"><div className="section-heading"><div><span className="eyebrow">THE LATEST</span><h2>Recent activity</h2></div><Link className="icon-link" to="/activity" aria-label="View all activity"><ArrowUpRight size={17} /></Link></div>{isLoading ? <LoadingRows /> : data?.activities.length ? <ActivityList items={data.activities.slice(0, 5)} /> : <div className="empty-mini"><span className="empty-icon"><ActivityIcon size={19} /></span><p>Activity will appear here as you work with your leads.</p></div>}</section></div>
     <section className="quick-actions"><div><span className="eyebrow">KEEP THINGS MOVING</span><h2>Quick actions</h2></div><div className="quick-action-list"><button onClick={() => setExpoModal(true)}><span className="quick-icon orange"><Plus size={18} /></span><span><strong>Create an expo</strong><small>Set up a new event</small></span><ChevronRight size={17} /></button><Link to="/expos"><span className="quick-icon blue"><Upload size={18} /></span><span><strong>Import from Excel</strong><small>Bring your lead list along</small></span><ChevronRight size={17} /></Link><Link to="/leads"><span className="quick-icon green"><Users size={18} /></span><span><strong>Browse your leads</strong><small>Search across your contacts</small></span><ChevronRight size={17} /></Link></div></section>
+    <DashboardInsights stats={stats} />
     {expoModal && <ExpoForm onClose={() => setExpoModal(false)} />}
   </div>
+}
+
+function DashboardInsights({ stats }: { stats?: Record<string, number> }) {
+  const navigate = useNavigate()
+  const recentLeadsQuery = useQuery({
+    queryKey: ['recent-dashboard-leads'],
+    queryFn: () => api<Page<Lead>>('/leads?pageSize=4&sort=newest'),
+  })
+
+  const totalLeads = stats?.leadCount || 0
+  const newCount = stats?.new || 0
+  const interestedCount = stats?.interested || 0
+  const calledCount = stats?.called || 0
+  const otherCount = (stats?.notInterested || 0) + (stats?.goodPresence || 0)
+  const contactedTotal = calledCount + interestedCount + otherCount
+  const completionPercent = totalLeads ? Math.min(100, Math.round((contactedTotal / totalLeads) * 100)) : 0
+
+  return (
+    <section className="dashboard-insights-hub">
+      <div className="insights-header">
+        <div>
+          <span className="eyebrow">PRIORITY FOLLOW-UP & LEAD MOMENTUM</span>
+          <h2>Inquiry Command Center</h2>
+          <p>Quickly connect with your latest stall inquiries and track conversion progress.</p>
+        </div>
+        <Link to="/leads" className="button secondary small">
+          <Users size={15} /> View all leads ({totalLeads})
+        </Link>
+      </div>
+
+      <div className="insights-grid">
+        <div className="panel insights-leads-panel">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">DIRECT OUTREACH</span>
+              <h3>Recent Inquiries Ready for Action</h3>
+            </div>
+            <span className="mini-tag amber">{newCount} fresh</span>
+          </div>
+
+          {recentLeadsQuery.isLoading ? (
+            <LoadingRows />
+          ) : recentLeadsQuery.data?.items.length ? (
+            <div className="quick-outreach-list">
+              {recentLeadsQuery.data.items.slice(0, 4).map((lead) => {
+                const displayName = lead.personName || lead.companyName || 'Inquiry Contact'
+                const phone = lead.primaryPhone?.replace(/\D/g, '') || ''
+                return (
+                  <div className="outreach-item" key={lead._id}>
+                    <span className={`avatar outreach-avatar ${avatarTone(displayName)}`}>
+                      {initials(displayName)}
+                    </span>
+                    <div className="outreach-info">
+                      <strong onClick={() => navigate(`/leads/${lead._id}`)}>{displayName}</strong>
+                      <span>
+                        {lead.personName ? (lead.companyName || lead.businessCategory || 'Direct Contact') : (lead.businessCategory || 'Booth Visitor')}
+                        {typeof lead.expoId !== 'string' && lead.expoId?.name ? ` · ${lead.expoId.name}` : ''}
+                      </span>
+                    </div>
+                    <span className={`status-pill ${lead.status}`}>
+                      <span />{statusLabel(lead.status)}
+                    </span>
+                    <div className="outreach-actions">
+                      {lead.primaryPhone ? (
+                        <>
+                          <a href={`tel:${lead.primaryPhone}`} className="icon-action-btn phone" title={`Call ${displayName}`} aria-label="Call">
+                            <Phone size={14} />
+                          </a>
+                          <a href={`https://wa.me/${phone}`} target="_blank" rel="noreferrer" className="icon-action-btn whatsapp" title={`WhatsApp ${displayName}`} aria-label="WhatsApp">
+                            <Zap size={14} />
+                          </a>
+                        </>
+                      ) : (
+                        <button onClick={() => navigate(`/leads/${lead._id}`)} className="icon-action-btn view" title="View details" aria-label="View">
+                          <ChevronRight size={15} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="empty-mini">
+              <span className="empty-icon"><Users size={18} /></span>
+              <p>No leads added yet. Your latest inquiries with instant Call & WhatsApp actions will appear here.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="panel insights-stats-panel">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">PIPELINE VELOCITY</span>
+              <h3>Follow-up Progression</h3>
+            </div>
+            <span className="velocity-percent">{completionPercent}% engaged</span>
+          </div>
+
+          <div className="velocity-progress-wrap">
+            <div className="velocity-bar-track">
+              <div className="velocity-segment new" style={{ width: `${totalLeads ? (newCount / totalLeads) * 100 : 0}%` }} title="New Inquiries" />
+              <div className="velocity-segment interested" style={{ width: `${totalLeads ? (interestedCount / totalLeads) * 100 : 0}%` }} title="Interested" />
+              <div className="velocity-segment called" style={{ width: `${totalLeads ? (calledCount / totalLeads) * 100 : 0}%` }} title="Called" />
+              <div className="velocity-segment other" style={{ width: `${totalLeads ? (otherCount / totalLeads) * 100 : 0}%` }} title="Other statuses" />
+            </div>
+            <div className="velocity-legend">
+              <div><i className="dot new" /><span>New ({newCount})</span></div>
+              <div><i className="dot interested" /><span>Interested ({interestedCount})</span></div>
+              <div><i className="dot called" /><span>Called ({calledCount})</span></div>
+              <div><i className="dot other" /><span>Closed ({otherCount})</span></div>
+            </div>
+          </div>
+
+          <div className="expo-pro-tip-box">
+            <div className="pro-tip-badge"><Sparkles size={14} /> Pro Follow-Up Tip</div>
+            <p><strong>The 48-Hour Response Rule:</strong> Following up within 48 hours of meeting at the stall increases deal conversion by over 70% while your pitch is top of mind.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 type ActivityItem = { _id: string; description: string; action: string; createdAt: string; expoId?: { name: string } }
@@ -346,7 +469,7 @@ function AnalyticsPanel({ expoId }: { expoId: string }) {
   const query = useQuery({ queryKey: ['analytics', expoId], queryFn: () => api<Analytics>(`/expos/${expoId}/analytics`) })
   if (query.isLoading) return <LoadingRows />
   if (query.isError || !query.data) return <ErrorPanel message="Could not load lead analytics." />
-  const data = query.data; const total = data.statuses.reduce((sum, item) => sum + item.count, 0); const tones = ['#55a877', '#648be8', '#ea7774', '#a8a9ab']
+  const data = query.data; const total = data.statuses.reduce((sum, item) => sum + item.count, 0); const tones = ['#f59e0b', '#55a877', '#648be8', '#ea7774', '#a8a9ab']
   return <div className="analytics-grid"><section className="panel chart-panel"><div className="section-heading"><div><span className="eyebrow">LEAD MOMENTUM</span><h2>Acquisition trend</h2></div><span className="chart-total"><strong>{total}</strong> total leads</span></div>{data.trend.length ? <TrendChart data={data.trend} /> : <div className="chart-empty">Your lead trend will show here once you add leads.</div>}</section><section className="panel chart-panel"><div className="section-heading"><div><span className="eyebrow">FOLLOW-UP</span><h2>Status breakdown</h2></div></div>{total ? <div className="donut-layout"><div className="donut-wrap"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={statuses.map((item) => ({ name: item.label, value: data.statuses.find((entry) => entry._id === item.value)?.count || 0 }))} innerRadius="66%" outerRadius="94%" paddingAngle={3} dataKey="value" stroke="none">{statuses.map((item, index) => <Cell key={item.value} fill={tones[index]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="donut-center"><strong>{total}</strong><small>leads</small></div></div><div className="legend-list">{statuses.map((item, index) => { const count = data.statuses.find((entry) => entry._id === item.value)?.count || 0; return <div key={item.value}><i style={{ background: tones[index] }} /><span>{item.label}</span><strong>{count}</strong></div> })}</div></div> : <div className="chart-empty">Status distribution appears as leads are added.</div>}</section><section className="panel chart-panel category-panel"><div className="section-heading"><div><span className="eyebrow">WHO YOU MET</span><h2>Business categories</h2></div></div>{data.categories.length ? <div className="category-bars">{data.categories.map((item, index) => <div key={item._id}><div><span>{item._id}</span><strong>{item.count}</strong></div><span className="bar-track"><i style={{ width: `${Math.max(5, item.count / Math.max(...data.categories.map((v) => v.count)) * 100)}%`, background: ['#ff7b3d', '#8094e8', '#52aa7b', '#d99b42'][index % 4] }} /></span></div>)}</div> : <div className="chart-empty">Add a business category to a lead to see this breakdown.</div>}</section><section className="panel chart-panel completeness-panel"><div className="section-heading"><div><span className="eyebrow">DATA QUALITY</span><h2>Contact completeness</h2></div></div><div className="completeness-list">{[['Phone numbers', data.completeness.withPhone], ['Email addresses', data.completeness.withEmail], ['Company names', data.completeness.withCompany]].map(([label, count]) => <div key={String(label)}><div><span>{label}</span><strong>{count} / {data.completeness.total}</strong></div><span className="bar-track"><i style={{ width: `${data.completeness.total ? Number(count) / data.completeness.total * 100 : 0}%` }} /></span></div>)}</div></section></div>
 }
 type Analytics = { statuses: { _id: Status; count: number }[]; categories: { _id: string; count: number }[]; trend: { _id: string; count: number }[]; completeness: { total: number; withPhone: number; withEmail: number; withCompany: number } }
@@ -365,7 +488,7 @@ function ExpoForm({ initial, onClose }: { initial?: Expo; onClose: () => void })
 
 function LeadForm({ expoId, initial, onClose }: { expoId: string; initial?: Lead; onClose: () => void }) {
   const [error, setError] = useState(''); const qc = useQueryClient(); const notifyUser = useNotify()
-  const [form, setForm] = useState({ visitDate: initial?.visitDate?.slice(0, 10) || '', personName: initial?.personName || '', companyName: initial?.companyName || '', businessCategory: initial?.businessCategory || '', designation: initial?.designation || '', primaryPhone: initial?.primaryPhone || '', otherPhones: initial?.otherPhones?.join(', ') || '', email: initial?.email || '', website: initial?.website || '', socialPlatform: initial?.socialPlatform || '', socialProfile: initial?.socialProfile || '', address: initial?.address || '', city: initial?.city || '', state: initial?.state || '', pincode: initial?.pincode || '', notes: initial?.notes || '', status: initial?.status || 'interested' as Status, source: initial?.source || 'Manual entry' })
+  const [form, setForm] = useState({ visitDate: initial?.visitDate?.slice(0, 10) || '', personName: initial?.personName || '', companyName: initial?.companyName || '', businessCategory: initial?.businessCategory || '', designation: initial?.designation || '', primaryPhone: initial?.primaryPhone || '', otherPhones: initial?.otherPhones?.join(', ') || '', email: initial?.email || '', website: initial?.website || '', socialPlatform: initial?.socialPlatform || '', socialProfile: initial?.socialProfile || '', address: initial?.address || '', city: initial?.city || '', state: initial?.state || '', pincode: initial?.pincode || '', notes: initial?.notes || '', status: initial?.status || 'new' as Status, source: initial?.source || 'Manual entry' })
   const mutation = useMutation({ mutationFn: () => { const { otherPhones, ...rest } = form; const payload = { ...rest, otherPhones: otherPhones.split(/[,;|\n]/).map((s) => s.trim()).filter(Boolean), socialMedia: initial?.socialMedia || {} }; return api(initial ? `/leads/${initial._id}` : `/expos/${expoId}/leads`, json(initial ? 'PUT' : 'POST', payload)) }, onSuccess: () => { notifyUser(initial ? 'Lead details saved' : 'Lead added'); void qc.invalidateQueries(); onClose() }, onError: (e: Error) => setError(e.message) })
   const update = (field: keyof typeof form, value: string) => setForm((old) => ({ ...old, [field]: value }))
   return <Modal title={initial ? 'Edit lead' : 'Add a lead'} eyebrow="LEAD CONTACT" onClose={onClose} wide><form onSubmit={(e) => { e.preventDefault(); setError(''); if (!form.companyName.trim() && !form.personName.trim()) { setError('Add a company name or contact person to continue.'); return }; mutation.mutate() }} className="form-grid">

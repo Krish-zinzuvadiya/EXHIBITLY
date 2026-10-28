@@ -16,7 +16,7 @@ const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL
 if (isProduction && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured in production.')
 if (isProduction && !process.env.MONGODB_URI) throw new Error('MONGODB_URI must be configured in production.')
 const jwtSecret = process.env.JWT_SECRET || 'local-development-secret-change-before-deploying'
-const statuses = ['interested', 'called', 'not-interested', 'good-presence'] as const
+const statuses = ['new', 'interested', 'called', 'not-interested', 'good-presence'] as const
 type LeadStatus = typeof statuses[number]
 type AuthedRequest = Request & { userId?: string }
 
@@ -242,7 +242,7 @@ app.get('/api/dashboard', auth, asyncRoute(async (req, res) => {
     Activity.find(userOnly(req)).sort({ createdAt: -1 }).limit(8).populate('expoId', 'name').lean(),
   ])
   const counts = Object.fromEntries(statusCounts.map((item: { _id: string; count: number }) => [item._id, item.count]))
-  return res.json({ stats: { expoCount, leadCount, interested: counts.interested || 0, called: counts.called || 0, notInterested: counts['not-interested'] || 0, goodPresence: counts['good-presence'] || 0 }, expos, activities })
+  return res.json({ stats: { expoCount, leadCount, new: counts.new || 0, interested: counts.interested || 0, called: counts.called || 0, notInterested: counts['not-interested'] || 0, goodPresence: counts['good-presence'] || 0 }, expos, activities })
 }))
 
 app.get('/api/expos', auth, asyncRoute(async (req, res) => {
@@ -514,7 +514,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 })
 
 const expoSchema = z.object({ name: z.string().trim().min(1).max(160), startDate: z.coerce.date().optional().or(z.literal('')), endDate: z.coerce.date().optional().or(z.literal('')), venue: z.string().max(180).optional(), city: z.string().max(120).optional(), organizer: z.string().max(180).optional(), website: z.string().max(300).optional(), description: z.string().max(2000).optional(), notes: z.string().max(5000).optional() }).transform((data) => ({ ...data, startDate: data.startDate || undefined, endDate: data.endDate || undefined }))
-const leadSchema = z.object({ personName: z.string().trim().max(160).optional(), visitDate: z.coerce.date().optional().or(z.literal('')), companyName: z.string().trim().max(180).optional(), designation: z.string().max(160).optional(), primaryPhone: z.string().max(40).optional(), otherPhones: z.array(z.string().max(40)).max(30).optional(), email: z.union([z.string().email().max(254), z.literal('')]).optional(), website: z.string().max(300).optional(), socialPlatform: z.string().max(80).optional(), socialProfile: z.string().max(300).optional(), socialMedia: z.object({ linkedin: z.string().max(300).optional(), instagram: z.string().max(300).optional(), facebook: z.string().max(300).optional(), youtube: z.string().max(300).optional(), other: z.string().max(300).optional() }).optional(), businessCategory: z.string().max(120).optional(), address: z.string().max(500).optional(), city: z.string().max(120).optional(), state: z.string().max(120).optional(), pincode: z.string().max(20).optional(), status: z.enum(statuses).optional().default('interested'), notes: z.string().max(5000).optional(), source: z.string().max(120).optional() }).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim()), { message: 'A company name or contact person is required.' }).transform((data) => ({ ...data, visitDate: data.visitDate || undefined, otherPhones: (data.otherPhones || []).filter(Boolean), email: data.email || '' }))
+const leadSchema = z.object({ personName: z.string().trim().max(160).optional(), visitDate: z.coerce.date().optional().or(z.literal('')), companyName: z.string().trim().max(180).optional(), designation: z.string().max(160).optional(), primaryPhone: z.string().max(40).optional(), otherPhones: z.array(z.string().max(40)).max(30).optional(), email: z.union([z.string().email().max(254), z.literal('')]).optional(), website: z.string().max(300).optional(), socialPlatform: z.string().max(80).optional(), socialProfile: z.string().max(300).optional(), socialMedia: z.object({ linkedin: z.string().max(300).optional(), instagram: z.string().max(300).optional(), facebook: z.string().max(300).optional(), youtube: z.string().max(300).optional(), other: z.string().max(300).optional() }).optional(), businessCategory: z.string().max(120).optional(), address: z.string().max(500).optional(), city: z.string().max(120).optional(), state: z.string().max(120).optional(), pincode: z.string().max(20).optional(), status: z.enum(statuses).optional().default('new'), notes: z.string().max(5000).optional(), source: z.string().max(120).optional() }).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim()), { message: 'A company name or contact person is required.' }).transform((data) => ({ ...data, visitDate: data.visitDate || undefined, otherPhones: (data.otherPhones || []).filter(Boolean), email: data.email || '' }))
 
 function leadQuery(req: AuthedRequest, expoId?: string) {
   const page = Math.max(1, Number(req.query.page) || 1)
@@ -576,7 +576,7 @@ function mapExcelRow(row: Record<string, unknown>, mapping: Record<string, strin
   }
   const rawDate = mapping.visitDate ? row[mapping.visitDate] : Object.entries(row).find(([key]) => columnAliases.visitDate.includes(normalizeColumn(key)))?.[1]
   const rawStatus = pick('status', 'status', 'leadstatus').toLowerCase()
-  const status: LeadStatus = /called/.test(rawStatus) ? 'called' : /notinterested/.test(rawStatus) ? 'not-interested' : /alreadygood|goodpresence/.test(rawStatus) ? 'good-presence' : 'interested'
+  const status: LeadStatus = /called/.test(rawStatus) ? 'called' : /notinterested/.test(rawStatus) ? 'not-interested' : /alreadygood|goodpresence/.test(rawStatus) ? 'good-presence' : /interested/.test(rawStatus) ? 'interested' : 'new'
   const otherPhoneColumns = Object.keys(row).filter(isOtherPhoneColumn)
   if (mapping.otherPhones && row[mapping.otherPhones] !== undefined) otherPhoneColumns.push(mapping.otherPhones)
   const extras = [...new Set(otherPhoneColumns)].flatMap((column) => String(row[column] ?? '').split(/[;,|\n]/).map((number) => number.trim()).filter(Boolean))
@@ -595,6 +595,6 @@ function duplicateKeys(lead: { personName?: string | null; companyName?: string 
   if (lead.personName?.trim() && lead.companyName?.trim()) keys.push(`name:${lead.personName.trim().toLowerCase()}|${lead.companyName.trim().toLowerCase()}`)
   return keys.length ? keys : [`name:${(lead.personName || '').trim().toLowerCase()}|${(lead.companyName || '').trim().toLowerCase()}`]
 }
-function statusLabel(status?: string) { return ({ interested: 'Interested', called: 'Called', 'not-interested': 'Not interested', 'good-presence': 'Already good presence' } as Record<string, string>)[status || ''] || 'Interested' }
+function statusLabel(status?: string) { return ({ new: 'New Inquiry', interested: 'Interested', called: 'Called', 'not-interested': 'Not interested', 'good-presence': 'Already good presence' } as Record<string, string>)[status || ''] || 'New Inquiry' }
 
 export default app

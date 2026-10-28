@@ -1,8 +1,12 @@
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import dotenv from 'dotenv'
 import express from 'express'
-import { resolve } from 'node:path'
 
-dotenv.config({ path: resolve(process.cwd(), '../.env') })
+const envPath = existsSync(resolve(process.cwd(), '../.env'))
+  ? resolve(process.cwd(), '../.env')
+  : resolve(process.cwd(), '.env')
+dotenv.config({ path: envPath })
 
 const [{ default: app }, { connectToDatabase }] = await Promise.all([
   import('./index.js'),
