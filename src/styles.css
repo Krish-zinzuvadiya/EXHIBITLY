@@ -239,3 +239,51 @@
 .expo-card-actions .reset-icon:hover{background:#fefce8!important;border-color:#fef08a!important;color:#b45309!important}
 .reset-status-btn{font-size:12px !important;color:#92400e !important;background:#fefce8 !important;border-color:#fef08a !important;display:inline-flex !important;align-items:center !important;gap:6px !important;transition:all .16s ease !important}
 .reset-status-btn:hover:not(:disabled){background:#fef9c3 !important;border-color:#fde047 !important;color:#78350f !important}
+.multi-value-viewer{position:relative;display:inline-flex;align-items:center;gap:6px;max-width:100%}
+.multi-value-viewer .primary-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.multi-value-viewer .primary-value a{color:inherit;text-decoration:none}
+.multi-value-viewer .primary-value a:hover{text-decoration:underline;color:var(--orange)}
+.multi-value-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:10px;font-size:10.5px;font-weight:700;background:#f3f0e6;color:#786f61;border:1px solid #e2ddd0;cursor:pointer;line-height:1.2;white-space:nowrap;transition:all .15s ease}
+.multi-value-badge:hover,.multi-value-badge.active{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--orange)}
+.multi-value-dropdown{position:absolute;top:calc(100% + 6px);left:0;z-index:90;min-width:260px;max-width:340px;background:#ffffff;border:1px solid #eae5db;border-radius:13px;box-shadow:0 12px 30px rgba(0,0,0,0.12),0 2px 7px rgba(0,0,0,0.06);padding:10px;animation:fadeInDown .15s ease;text-align:left}
+.multi-value-dropdown .dropdown-head{display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid #f2eee8}
+.multi-value-dropdown .dropdown-head strong{font-size:11.5px;font-weight:700;color:#2d2925}
+.multi-value-dropdown .close-dropdown-btn{background:transparent;border:0;color:#9b958c;cursor:pointer;padding:3px;display:grid;place-items:center;border-radius:6px;transition:all .15s}
+.multi-value-dropdown .close-dropdown-btn:hover{color:#333;background:#f0ece4}
+.multi-value-dropdown .dropdown-items{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto}
+.multi-value-dropdown .dropdown-item{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;background:#faf8f5;font-size:12px}
+.multi-value-dropdown .item-index{font-size:9.5px;font-weight:700;color:#9e978c;text-transform:uppercase;min-width:44px}
+.multi-value-dropdown .item-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:#27231e}
+.multi-value-dropdown .item-text a{color:#27231e;text-decoration:none}
+.multi-value-dropdown .item-text a:hover{text-decoration:underline;color:var(--orange)}
+.multi-value-dropdown .copy-btn{border:0;background:transparent;color:#999288;padding:4px;border-radius:6px;cursor:pointer;display:grid;place-items:center;transition:all .15s}
+.multi-value-dropdown .copy-btn:hover{background:#ede8de;color:#222}
+.multi-value-dropdown .copy-btn svg.green{color:#16a34a}
+.lead-contact-line{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:5px}
+.contact-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#5a554c}
+.contact-chip svg{color:#9d978d;flex-shrink:0}
+.preview-table>div{grid-template-columns:1fr 1.2fr 1fr 1.2fr 1.4fr .8fr !important}
+.contact-row .multi-value-viewer{margin-top:3px !important;display:inline-flex !important;align-items:center !important;gap:8px !important;font-size:13px !important;font-weight:600 !important}
+.contact-row strong,.contact-row>div>a,.contact-row .multi-value-viewer .primary-value,.contact-row .multi-value-viewer .primary-value a{font-family:Inter, "Segoe UI", sans-serif !important;font-size:13px !important;font-weight:600 !important;color:#2c2823 !important;line-height:1.35 !important;overflow-wrap:anywhere !important;text-decoration:none !important}
+.contact-row>div>a:hover,.contact-row .multi-value-viewer .primary-value a:hover{color:var(--orange) !important;text-decoration:underline !important}
+.contact-row .multi-value-badge{font-family:Inter, "Segoe UI", sans-serif !important;font-size:11px !important;font-weight:600 !important;padding:2.5px 8.5px !important;border-radius:8px !important;line-height:1.2 !important}
+.contact-row small{font-size:11.5px !important;color:#8c8780 !important;font-weight:500 !important;margin-bottom:2px !important}
+.contact-row{min-height:64px !important;gap:13px !important}
+.contact-icon{width:35px !important;height:35px !important;border-radius:10px !important}
+.detail-card{padding:22px 24px !important}
+.detail-card .section-heading{margin-bottom:16px !important}
+.detail-card .section-heading h2{font-size:17px !important;letter-spacing:-.3px !important}
+.detail-card .eyebrow{font-size:10.5px !important;letter-spacing:1.2px !important}
+.lead-detail-head h1{font-size:28px !important;letter-spacing:-.6px !important}
+.lead-detail-head p{font-size:13px !important;color:#79746d !important;margin-top:6px !important}
+.lead-detail-head .eyebrow{font-size:11px !important;letter-spacing:1.3px !important}
+.lead-detail-head .status-pill{height:32px !important;font-size:11.5px !important;padding:0 12px !important}
+.lead-detail-actions .button{height:38px !important;font-size:12px !important;padding:0 16px !important;border-radius:10px !important}
+.lead-detail-actions .icon-button{width:38px !important;height:38px !important;border-radius:10px !important}
+.lead-details-page .back-link{font-size:12px !important;gap:8px !important}
+.lead-notes{font-size:13px !important;line-height:1.7 !important;color:#666159 !important}
+.social-links a{font-size:11.5px !important;padding:7px 11px !important;border-radius:8px !important}
+.source-line{font-size:11px !important;color:#9c978f !important}
+.detail-grid span{font-size:11.5px !important}
+.detail-grid strong{font-size:13px !important}
+.detail-description p{font-size:12.5px !important}

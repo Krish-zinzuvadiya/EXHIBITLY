@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bell, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Download, FileSpreadsheet, Globe2, LayoutDashboard, LoaderCircle, LogOut, Mail, MapPin, Menu, MoreHorizontal, Pencil, Phone, Plus, RotateCcw, Search, Settings, ShieldCheck, Sparkles, Tags, Trash2, Upload, UserCircle2, Users, X, Zap } from 'lucide-react'
+import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bell, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Copy, Download, FileSpreadsheet, Globe2, LayoutDashboard, LoaderCircle, LogOut, Mail, MapPin, Menu, MoreHorizontal, Pencil, Phone, Plus, RotateCcw, Search, Settings, ShieldCheck, Sparkles, Tags, Trash2, Upload, UserCircle2, Users, X, Zap } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { format, isValid, parseISO } from 'date-fns'
 import { api, json } from './api'
@@ -462,11 +462,117 @@ function LeadsPage() {
   return <div className="page-content"><div className="page-title-row"><div><span className="eyebrow">YOUR CONTACTS</span><h1>All leads</h1><p>Search across every expo and keep the next step in view.</p></div></div><div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder="Search name, company, phone, email…" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select className="select-control" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}><option value="">Every status</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="result-count">{data.data?.total ?? 0} contacts</span></div>{data.isLoading ? <LoadingRows /> : data.data?.items.length ? <><LeadList leads={data.data.items} showExpo />{(data.data.pages > 1) && <div className="pagination"><span>Page {page} of {data.data.pages}</span><button className="icon-button" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><button className="icon-button" disabled={page >= data.data.pages} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div>}</> : <EmptyState icon={<Users size={21} />} title={search ? 'No leads found' : 'Your lead book is empty'} text={search ? 'Try a different search.' : 'Add leads from an expo workspace or import an Excel list.'} action={<Link className="button secondary small" to="/expos"><Building2 size={15} />Open an expo</Link>} />}</div>
 }
 
+function MultiValueViewer({ values, type = 'text', label }: { values: string[]; type?: 'email' | 'phone' | 'text'; label?: string }) {
+  const [open, setOpen] = useState(false)
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+  const containerRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const cleanValues = values.map((v) => (v || '').trim()).filter(Boolean)
+  if (!cleanValues.length) return null
+
+  const first = cleanValues[0]
+  const extras = cleanValues.slice(1)
+
+  const copyToClipboard = (text: string, index: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedIndex(index)
+      setTimeout(() => setCopiedIndex(null), 1800)
+    }).catch(() => undefined)
+  }
+
+  const renderLink = (val: string) => {
+    if (type === 'email') return <a href={`mailto:${val}`} onClick={(e) => e.stopPropagation()}>{val}</a>
+    if (type === 'phone') return <a href={`tel:${val}`} onClick={(e) => e.stopPropagation()}>{val}</a>
+    return <span>{val}</span>
+  }
+
+  return (
+    <span className="multi-value-viewer" ref={containerRef} onClick={(e) => e.stopPropagation()}>
+      <span className="primary-value">{renderLink(first)}</span>
+      {extras.length > 0 && (
+        <button
+          type="button"
+          className={`multi-value-badge ${open ? 'active' : ''}`}
+          title={`Click to view all ${cleanValues.length} ${label || (type === 'email' ? 'emails' : 'values')}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            setOpen(!open)
+          }}
+        >
+          +{extras.length} others
+        </button>
+      )}
+      {open && (
+        <div className="multi-value-dropdown" onClick={(e) => e.stopPropagation()}>
+          <div className="dropdown-head">
+            <strong>All {label || (type === 'email' ? 'Emails' : type === 'phone' ? 'Phone Numbers' : 'Values')} ({cleanValues.length})</strong>
+            <button type="button" className="close-dropdown-btn" onClick={() => setOpen(false)} aria-label="Close">
+              <X size={13} />
+            </button>
+          </div>
+          <div className="dropdown-items">
+            {cleanValues.map((val, idx) => (
+              <div key={val + idx} className="dropdown-item">
+                <span className="item-index">{idx === 0 ? 'Primary' : `#${idx + 1}`}</span>
+                <span className="item-text">{renderLink(val)}</span>
+                <button
+                  type="button"
+                  className="copy-btn"
+                  title="Copy to clipboard"
+                  onClick={(e) => copyToClipboard(val, idx, e)}
+                >
+                  {copiedIndex === idx ? <Check size={12} className="green" /> : <Copy size={12} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
 function LeadList({ leads, compact = false, showExpo = false, selected = [], onSelect }: { leads: Lead[]; compact?: boolean; showExpo?: boolean; selected?: string[]; onSelect?: (id: string) => void }) {
   const navigate = useNavigate()
   const qc = useQueryClient(); const notifyUser = useNotify()
   const statusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: Status }) => api(`/leads/${id}/status`, json('PATCH', { status })), onSuccess: () => { notifyUser('Status updated'); void qc.invalidateQueries() }, onError: (e: Error) => notifyUser(e.message, 'error') })
-  return <div className={`lead-list ${compact ? 'compact' : ''}`}>{leads.map((lead) => { const displayName = lead.personName || lead.companyName || 'Unnamed lead'; return <article className="lead-row" key={lead._id}><div className="lead-person-cell">{onSelect && <input aria-label={`Select ${displayName}`} type="checkbox" checked={selected.includes(lead._id)} onChange={() => onSelect(lead._id)} />}{!compact && <span className={`avatar lead-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span>}<button className="lead-person-copy" onClick={() => navigate(`/leads/${lead._id}`)}><strong>{displayName}</strong><span>{lead.personName ? (lead.companyName || 'Independent contact') : (lead.businessCategory || 'Company')}{lead.personName && lead.businessCategory ? ` · ${lead.businessCategory}` : ''}</span>{lead.primaryPhone && <small><Phone size={12} />{lead.primaryPhone}</small>}{showExpo && typeof lead.expoId !== 'string' && <small className="lead-expo-name"><Building2 size={12} />{lead.expoId.name}</small>}</button></div><div className="lead-status-cell"><StatusPill status={lead.status} onChange={(next) => statusMutation.mutate({ id: lead._id, status: next })} /></div><div className="lead-date-cell">{safeDate(lead.visitDate || lead.createdAt)}</div><div className="lead-row-actions"><button className="icon-button quiet" title="View lead" onClick={() => navigate(`/leads/${lead._id}`)}><ChevronRight size={17} /></button></div></article> })}</div>
+  return <div className={`lead-list ${compact ? 'compact' : ''}`}>{leads.map((lead) => {
+    const displayName = lead.personName || lead.companyName || 'Unnamed lead'
+    const allPhones = [lead.primaryPhone, ...(lead.otherPhones || [])].filter(Boolean) as string[]
+    const allEmails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean) as string[]
+    return <article className="lead-row" key={lead._id}>
+      <div className="lead-person-cell">
+        {onSelect && <input aria-label={`Select ${displayName}`} type="checkbox" checked={selected.includes(lead._id)} onChange={() => onSelect(lead._id)} />}
+        {!compact && <span className={`avatar lead-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span>}
+        <button className="lead-person-copy" onClick={() => navigate(`/leads/${lead._id}`)}>
+          <strong>{displayName}</strong>
+          <span>{lead.personName ? (lead.companyName || 'Independent contact') : (lead.businessCategory || 'Company')}{lead.personName && lead.businessCategory ? ` · ${lead.businessCategory}` : ''}</span>
+          <div className="lead-contact-line">
+            {allPhones.length > 0 && <span className="contact-chip phone-chip"><Phone size={12} /><MultiValueViewer values={allPhones} type="phone" label="phones" /></span>}
+            {allEmails.length > 0 && <span className="contact-chip email-chip"><Mail size={12} /><MultiValueViewer values={allEmails} type="email" label="emails" /></span>}
+          </div>
+          {showExpo && typeof lead.expoId !== 'string' && <small className="lead-expo-name"><Building2 size={12} />{lead.expoId.name}</small>}
+        </button>
+      </div>
+      <div className="lead-status-cell"><StatusPill status={lead.status} onChange={(next) => statusMutation.mutate({ id: lead._id, status: next })} /></div>
+      <div className="lead-date-cell">{safeDate(lead.visitDate || lead.createdAt)}</div>
+      <div className="lead-row-actions"><button className="icon-button quiet" title="View lead" onClick={() => navigate(`/leads/${lead._id}`)}><ChevronRight size={17} /></button></div>
+    </article>
+  })}</div>
 }
 function avatarTone(name: string) { const tones = ['mint', 'peach', 'lavender', 'blue', 'sand']; return tones[(name.charCodeAt(0) || 0) % tones.length] }
 function StatusPill({ status, onChange }: { status: Status; onChange: (status: Status) => void }) { return <label className={`status-pill ${status}`}><span />{statusLabel(status)}<ChevronDown size={12} /><select aria-label="Change lead status" value={status} onChange={(e) => onChange(e.target.value as Status)}>{statuses.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label> }
@@ -479,14 +585,16 @@ function LeadDetails() {
   if (query.isLoading) return <div className="page-content"><LoadingRows /></div>
   if (query.isError || !query.data) return <div className="page-content"><ErrorPanel message="Lead not found." /><button className="back-link" onClick={() => navigate(-1)}><ArrowLeft size={16} />Go back</button></div>
   const lead = query.data; const expo = typeof lead.expoId === 'string' ? null : lead.expoId; const displayName = lead.personName || lead.companyName || 'Unnamed lead'
+  const allPhones = [lead.primaryPhone, ...(lead.otherPhones || [])].filter(Boolean) as string[]
+  const allEmails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean) as string[]
   return <div className="page-content lead-details-page"><button className="back-link" onClick={() => navigate(expo ? `/expos/${expo._id}?tab=leads` : '/leads')}><ArrowLeft size={16} />{expo?.name || 'All leads'}</button><div className="lead-detail-head"><span className={`avatar detail-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span><div><span className="eyebrow">LEAD PROFILE</span><h1>{displayName}</h1><p>{lead.personName && lead.companyName ? lead.companyName : (lead.businessCategory || lead.designation || 'Company contact')}{lead.designation && lead.personName ? ` · ${lead.designation}` : ''}</p></div><StatusPill status={lead.status} onChange={(status) => api(`/leads/${lead._id}/status`, json('PATCH', { status })).then(() => { notifyUser('Status updated'); void qc.invalidateQueries() }).catch((e: Error) => notifyUser(e.message, 'error'))} /></div>
-    <div className="lead-detail-actions">{lead.primaryPhone && <a className="button soft-green" href={`tel:${lead.primaryPhone}`}><Phone size={16} />Call</a>}{lead.primaryPhone && <a className="button soft-green" href={`https://wa.me/${lead.primaryPhone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><Zap size={16} />WhatsApp</a>}{lead.email && <a className="button soft-blue" href={`mailto:${lead.email}`}><Mail size={16} />Email</a>}<button className="button secondary" onClick={() => setEdit(true)}><Pencil size={16} />Edit details</button><button className="icon-button" title="Delete lead" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /></button></div>
-    <div className="lead-detail-grid"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">CONTACT</span><h2>How to reach them</h2></div></div><ContactRow icon={<Phone size={17} />} label="Primary mobile" value={lead.primaryPhone || 'Not added'} href={lead.primaryPhone ? `tel:${lead.primaryPhone}` : undefined} />{lead.otherPhones?.map((number, index) => <ContactRow key={number + index} icon={<Phone size={17} />} label={`Other number ${index + 1}`} value={number} href={`tel:${number}`} />)}<ContactRow icon={<Mail size={17} />} label="Email" value={lead.email || 'Not added'} href={lead.email ? `mailto:${lead.email}` : undefined} /><ContactRow icon={<Globe2 size={17} />} label="Website" value={lead.website || 'Not added'} href={lead.website ? (lead.website.startsWith('http') ? lead.website : `https://${lead.website}`) : undefined} external /></section>
+    <div className="lead-detail-actions">{allPhones.length > 0 && <a className="button soft-green" href={`tel:${allPhones[0]}`}><Phone size={16} />Call</a>}{allPhones.length > 0 && <a className="button soft-green" href={`https://wa.me/${allPhones[0].replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><Zap size={16} />WhatsApp</a>}{allEmails.length > 0 && <a className="button soft-blue" href={`mailto:${allEmails[0]}`}><Mail size={16} />Email {allEmails.length > 1 ? `(${allEmails.length})` : ''}</a>}<button className="button secondary" onClick={() => setEdit(true)}><Pencil size={16} />Edit details</button><button className="icon-button" title="Delete lead" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /></button></div>
+    <div className="lead-detail-grid"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">CONTACT</span><h2>How to reach them</h2></div></div><ContactRow icon={<Phone size={17} />} label="Mobile number(s)" value={allPhones[0] || 'Not added'} extraValues={allPhones.length > 1 ? allPhones : undefined} type="phone" href={allPhones[0] ? `tel:${allPhones[0]}` : undefined} /><ContactRow icon={<Mail size={17} />} label="Email address" value={allEmails[0] || 'Not added'} extraValues={allEmails.length > 1 ? allEmails : undefined} type="email" href={allEmails[0] ? `mailto:${allEmails[0]}` : undefined} /><ContactRow icon={<Globe2 size={17} />} label="Website" value={lead.website || 'Not added'} href={lead.website ? (lead.website.startsWith('http') ? lead.website : `https://${lead.website}`) : undefined} external /></section>
       <section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">BUSINESS</span><h2>Company information</h2></div></div><ContactRow icon={<CalendarDays size={17} />} label="Date visited" value={safeDate(lead.visitDate)} /><ContactRow icon={<Building2 size={17} />} label="Company" value={lead.companyName || 'Not added'} /><ContactRow icon={<Tags size={17} />} label="Category" value={lead.businessCategory || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Contact person" value={lead.personName || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Designation" value={lead.designation || 'Not added'} /><ContactRow icon={<MapPin size={17} />} label="Address" value={[lead.address, lead.city, lead.state, lead.pincode].filter(Boolean).join(', ') || 'Not added'} />{expo && <ContactRow icon={<Building2 size={17} />} label="Expo" value={expo.name} href={`/expos/${expo._id}?tab=overview`} />}</section>
       <section className="panel detail-card notes-card"><div className="section-heading"><div><span className="eyebrow">CONTEXT</span><h2>Notes & social</h2></div></div><p className="lead-notes">{lead.notes || 'No notes yet. Add details from your conversation so the next follow-up feels personal.'}</p><div className="social-links">{lead.socialPlatform && (lead.socialProfile ? <a href={lead.socialProfile.startsWith('http') ? lead.socialProfile : `https://${lead.socialProfile}`} target="_blank" rel="noreferrer">{lead.socialPlatform}<ArrowUpRight size={13} /></a> : <span>{lead.socialPlatform}</span>)}{Object.entries(lead.socialMedia || {}).filter(([, value]) => value).map(([key, value]) => <a key={key} href={String(value).startsWith('http') ? String(value) : `https://${value}`} target="_blank" rel="noreferrer">{key}<ArrowUpRight size={13} /></a>)}</div><small className="source-line">Added {safeDate(lead.createdAt)} · {lead.source || 'Manual entry'}</small></section></div>
     {edit && <LeadForm expoId={expo?._id || String(lead.expoId)} initial={lead} onClose={() => setEdit(false)} />}{confirmDelete && <ConfirmModal title="Delete this lead?" text={`This will permanently remove ${displayName} from your workspace.`} confirm="Delete lead" onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate()} busy={del.isPending} />}</div>
 }
-function ContactRow({ icon, label, value, href, external = false }: { icon: ReactNode; label: string; value: string; href?: string; external?: boolean }) { return <div className="contact-row"><span className="contact-icon">{icon}</span><div><small>{label}</small>{href ? <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>{value}{external && <ArrowUpRight size={13} />}</a> : <strong>{value}</strong>}</div>{href && !external && <a className="contact-action" href={href} aria-label={label}><ArrowUpRight size={15} /></a>}</div> }
+function ContactRow({ icon, label, value, href, external = false, extraValues, type = 'text' }: { icon: ReactNode; label: string; value: string; href?: string; external?: boolean; extraValues?: string[]; type?: 'email' | 'phone' | 'text' }) { return <div className="contact-row"><span className="contact-icon">{icon}</span><div><small>{label}</small>{extraValues && extraValues.length > 1 ? <MultiValueViewer values={extraValues} type={type} label={label} /> : href ? <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>{value}{external && <ArrowUpRight size={13} />}</a> : <strong>{value}</strong>}</div>{href && !external && <a className="contact-action" href={href} aria-label={label}><ArrowUpRight size={15} /></a>}</div> }
 
 function AnalyticsPanel({ expoId }: { expoId: string }) {
   const query = useQuery({ queryKey: ['analytics', expoId], queryFn: () => api<Analytics>(`/expos/${expoId}/analytics`) })
@@ -511,8 +619,10 @@ function ExpoForm({ initial, onClose }: { initial?: Expo; onClose: () => void })
 
 function LeadForm({ expoId, initial, onClose }: { expoId: string; initial?: Lead; onClose: () => void }) {
   const [error, setError] = useState(''); const qc = useQueryClient(); const notifyUser = useNotify()
-  const [form, setForm] = useState({ visitDate: initial?.visitDate?.slice(0, 10) || '', personName: initial?.personName || '', companyName: initial?.companyName || '', businessCategory: initial?.businessCategory || '', designation: initial?.designation || '', primaryPhone: initial?.primaryPhone || '', otherPhones: initial?.otherPhones?.join(', ') || '', email: initial?.email || '', website: initial?.website || '', socialPlatform: initial?.socialPlatform || '', socialProfile: initial?.socialProfile || '', address: initial?.address || '', city: initial?.city || '', state: initial?.state || '', pincode: initial?.pincode || '', notes: initial?.notes || '', status: initial?.status || 'new' as Status, source: initial?.source || 'Manual entry' })
-  const mutation = useMutation({ mutationFn: () => { const { otherPhones, ...rest } = form; const payload = { ...rest, otherPhones: otherPhones.split(/[,;|\n]/).map((s) => s.trim()).filter(Boolean), socialMedia: initial?.socialMedia || {} }; return api(initial ? `/leads/${initial._id}` : `/expos/${expoId}/leads`, json(initial ? 'PUT' : 'POST', payload)) }, onSuccess: () => { notifyUser(initial ? 'Lead details saved' : 'Lead added'); void qc.invalidateQueries(); onClose() }, onError: (e: Error) => setError(e.message) })
+  const initialEmails = [initial?.email, ...(initial?.otherEmails || [])].filter(Boolean).join(', ')
+  const initialPhones = [initial?.primaryPhone, ...(initial?.otherPhones || [])].filter(Boolean).join(', ')
+  const [form, setForm] = useState({ visitDate: initial?.visitDate?.slice(0, 10) || '', personName: initial?.personName || '', companyName: initial?.companyName || '', businessCategory: initial?.businessCategory || '', designation: initial?.designation || '', primaryPhone: initialPhones, otherPhones: '', email: initialEmails, website: initial?.website || '', socialPlatform: initial?.socialPlatform || '', socialProfile: initial?.socialProfile || '', address: initial?.address || '', city: initial?.city || '', state: initial?.state || '', pincode: initial?.pincode || '', notes: initial?.notes || '', status: initial?.status || 'new' as Status, source: initial?.source || 'Manual entry' })
+  const mutation = useMutation({ mutationFn: () => { const payload = { ...form, socialMedia: initial?.socialMedia || {} }; return api(initial ? `/leads/${initial._id}` : `/expos/${expoId}/leads`, json(initial ? 'PUT' : 'POST', payload)) }, onSuccess: () => { notifyUser(initial ? 'Lead details saved' : 'Lead added'); void qc.invalidateQueries(); onClose() }, onError: (e: Error) => setError(e.message) })
   const update = (field: keyof typeof form, value: string) => setForm((old) => ({ ...old, [field]: value }))
   return <Modal title={initial ? 'Edit lead' : 'Add a lead'} eyebrow="LEAD CONTACT" onClose={onClose} wide><form onSubmit={(e) => { e.preventDefault(); setError(''); if (!form.companyName.trim() && !form.personName.trim()) { setError('Add a company name or contact person to continue.'); return }; mutation.mutate() }} className="form-grid">
     <div className="form-section-label span-two">VISIT & BUSINESS</div>
@@ -522,9 +632,9 @@ function LeadForm({ expoId, initial, onClose }: { expoId: string; initial?: Lead
     <label><span>Contact person <span className="muted-label">(optional)</span></span><input value={form.personName} onChange={(e) => update('personName', e.target.value)} placeholder="Contact’s name" /></label>
     <label>Designation<input value={form.designation} onChange={(e) => update('designation', e.target.value)} placeholder="Role or title" /></label>
     <div className="form-section-label span-two">CONTACT</div>
-    <label>Mobile number 1<input type="tel" value={form.primaryPhone} onChange={(e) => update('primaryPhone', e.target.value)} placeholder="Primary mobile number" /></label>
-    <label>Email<input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} placeholder="name@company.com" /></label>
-    <label className="span-two">Other mobile numbers<input value={form.otherPhones} onChange={(e) => update('otherPhones', e.target.value)} placeholder="Add multiple numbers separated by commas" /></label>
+    <label><span>Mobile number(s) <span className="muted-label">(multiple allowed)</span></span><input type="text" value={form.primaryPhone} onChange={(e) => update('primaryPhone', e.target.value)} placeholder="e.g. 9825012345, 9825067890" /></label>
+    <label><span>Email <span className="muted-label">(multiple allowed)</span></span><input type="text" value={form.email} onChange={(e) => update('email', e.target.value)} placeholder="contact@company.com, info@company.com" /></label>
+    <label className="span-two">Other mobile numbers<input value={form.otherPhones} onChange={(e) => update('otherPhones', e.target.value)} placeholder="Additional numbers separated by commas" /></label>
     <label>Website<input value={form.website} onChange={(e) => update('website', e.target.value)} placeholder="company.com" /></label>
     <label>City<input value={form.city} onChange={(e) => update('city', e.target.value)} /></label>
     <label className="span-two">Address<input value={form.address} onChange={(e) => update('address', e.target.value)} /></label>
@@ -547,7 +657,11 @@ function ImportModal({ expoId, expoName, onClose }: { expoId: string; expoName: 
   const previewMutation = useMutation({ mutationFn: async ({ selected, columns }: { selected: File; columns?: Record<string, string> }) => { const body = new FormData(); body.append('file', selected); if (columns) body.append('mapping', JSON.stringify(columns)); return api<ImportPreview>(`/expos/${expoId}/import/preview`, { method: 'POST', body }) }, onSuccess: (value) => { setPreview(value); setMapping(value.mapping) }, onError: (e: Error) => setError(e.message) })
   const importMutation = useMutation({ mutationFn: async () => { if (!file) throw new Error('Choose an Excel file first.'); const body = new FormData(); body.append('file', file); body.append('mapping', JSON.stringify(preview?.mapping || mapping)); return api<{ imported: number; duplicates: number; invalid: number }>('/expos/' + expoId + '/import', { method: 'POST', body }) }, onSuccess: (value) => { setResult(value); void qc.invalidateQueries() }, onError: (e: Error) => setError(e.message) })
   const pickFile = (selected?: File) => { if (!selected) return; if (!/\.xlsx?$/i.test(selected.name)) { setError('Choose an .xlsx or .xls file.'); return }; if (selected.size > 4 * 1024 * 1024) { setError('Excel files must be 4 MB or smaller on this deployment.'); return }; setFile(selected); setPreview(null); setError(''); previewMutation.mutate({ selected }) }
-  return <Modal title={result ? 'Import complete' : 'Import leads'} eyebrow={result ? 'READY TO GO' : expoName.toUpperCase()} onClose={onClose} wide>{result ? <div className="import-success"><span className="success-badge"><Check size={25} /></span><h3>{result.imported} leads added</h3><p>{result.duplicates} duplicates skipped · {result.invalid} invalid rows skipped</p><button className="button primary" onClick={onClose}>View leads <ArrowUpRight size={16} /></button></div> : <><div className={`drop-zone ${preview ? 'has-file' : ''}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); pickFile(e.dataTransfer.files[0]) }}><span className="file-icon"><FileSpreadsheet size={24} /></span><strong>{previewMutation.isPending ? 'Reading your spreadsheet…' : file?.name || 'Drop your Excel file here'}</strong><span>First sheet is read · .xlsx and .xls · max 4 MB</span><label className="button secondary small">{preview ? 'Choose another file' : 'Browse files'}<input type="file" accept=".xlsx,.xls" onChange={(e) => pickFile(e.target.files?.[0])} /></label></div>{error && <p className="form-error">{error}</p>}{preview && <><details className="column-mapping" open={!mapping.companyName && !mapping.personName}><summary>Check column mapping</summary><div className="mapping-fields">{importMapFields.map((field) => <label key={field.key}>{field.label}<select value={mapping[field.key] || ''} onChange={(e) => setMapping((current) => ({ ...current, [field.key]: e.target.value }))}><option value="">Auto detect</option>{preview.headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>)}<button type="button" className="button secondary small" disabled={previewMutation.isPending || !file} onClick={() => file && previewMutation.mutate({ selected: file, columns: mapping })}>{previewMutation.isPending ? 'Updating…' : 'Apply mapping'}</button></div></details><div className="import-summary"><div><strong>{preview.total}</strong><span>rows found</span></div><div className="valid"><strong>{preview.valid}</strong><span>ready to import</span></div><div className="duplicate"><strong>{preview.duplicates}</strong><span>duplicates</span></div><div className="invalid"><strong>{preview.invalid}</strong><span>invalid</span></div></div><div className="import-preview"><div className="preview-head"><strong>Preview</strong><span>Rows with a company name or contact person are ready to import</span></div><div className="preview-table"><div><span>Visited</span><span>Company</span><span>Contact</span><span>Category</span><span>Mobile</span><span>Result</span></div>{preview.rows.slice(0, 7).map((row) => <div key={row.rowNumber}><span>{row.data.visitDate ? safeDate(String(row.data.visitDate)) : '—'}</span><span>{String(row.data.companyName || '—')}</span><span>{String(row.data.personName || '—')}</span><span>{String(row.data.businessCategory || '—')}</span><span>{String(row.data.primaryPhone || '—')}</span><span className={row.duplicate ? 'duplicate' : row.valid ? 'valid' : 'invalid'}>{row.duplicate ? 'Duplicate' : row.valid ? 'Ready' : row.issue}</span></div>)}</div>{preview.truncated && <small className="muted-note">Showing 7 sample rows. All valid rows will be imported.</small>}</div><p className="mapping-note"><Sparkles size={15} /> Company, optional category and contact details, mobile numbers, email, website and social media columns are detected automatically.</p></>}{!preview && !previewMutation.isPending && <div className="mapping-note"><Sparkles size={15} /> Use company name, optional category and contact person, designation, mobile number 1, other mobile numbers, email, website and social media columns.</div>}<button className="text-link sample-template" onClick={() => void downloadSampleTemplate(expoId, setError)}><Download size={14} />Download sample template</button><div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!preview || preview.valid === 0 || importMutation.isPending} onClick={() => importMutation.mutate()}>{importMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import {preview?.valid || 0} leads</button></div></>}</Modal>
+  return <Modal title={result ? 'Import complete' : 'Import leads'} eyebrow={result ? 'READY TO GO' : expoName.toUpperCase()} onClose={onClose} wide>{result ? <div className="import-success"><span className="success-badge"><Check size={25} /></span><h3>{result.imported} leads added</h3><p>{result.duplicates} duplicates skipped · {result.invalid} invalid rows skipped</p><button className="button primary" onClick={onClose}>View leads <ArrowUpRight size={16} /></button></div> : <><div className={`drop-zone ${preview ? 'has-file' : ''}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); pickFile(e.dataTransfer.files[0]) }}><span className="file-icon"><FileSpreadsheet size={24} /></span><strong>{previewMutation.isPending ? 'Reading your spreadsheet…' : file?.name || 'Drop your Excel file here'}</strong><span>First sheet is read · .xlsx and .xls · max 4 MB</span><label className="button secondary small">{preview ? 'Choose another file' : 'Browse files'}<input type="file" accept=".xlsx,.xls" onChange={(e) => pickFile(e.target.files?.[0])} /></label></div>{error && <p className="form-error">{error}</p>}{preview && <><details className="column-mapping" open={!mapping.companyName && !mapping.personName}><summary>Check column mapping</summary><div className="mapping-fields">{importMapFields.map((field) => <label key={field.key}>{field.label}<select value={mapping[field.key] || ''} onChange={(e) => setMapping((current) => ({ ...current, [field.key]: e.target.value }))}><option value="">Auto detect</option>{preview.headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>)}<button type="button" className="button secondary small" disabled={previewMutation.isPending || !file} onClick={() => file && previewMutation.mutate({ selected: file, columns: mapping })}>{previewMutation.isPending ? 'Updating…' : 'Apply mapping'}</button></div></details><div className="import-summary"><div><strong>{preview.total}</strong><span>rows found</span></div><div className="valid"><strong>{preview.valid}</strong><span>ready to import</span></div><div className="duplicate"><strong>{preview.duplicates}</strong><span>duplicates</span></div><div className="invalid"><strong>{preview.invalid}</strong><span>invalid</span></div></div><div className="import-preview"><div className="preview-head"><strong>Preview</strong><span>Rows with a company name or contact person are ready to import</span></div><div className="preview-table"><div><span>Visited</span><span>Company</span><span>Contact</span><span>Mobile</span><span>Email</span><span>Result</span></div>{preview.rows.slice(0, 7).map((row) => {
+    const rowEmails = [row.data.email, ...(Array.isArray(row.data.otherEmails) ? row.data.otherEmails : [])].filter(Boolean) as string[]
+    const rowPhones = [row.data.primaryPhone, ...(Array.isArray(row.data.otherPhones) ? row.data.otherPhones : [])].filter(Boolean) as string[]
+    return <div key={row.rowNumber}><span>{row.data.visitDate ? safeDate(String(row.data.visitDate)) : '—'}</span><span>{String(row.data.companyName || '—')}</span><span>{String(row.data.personName || '—')}</span><span>{rowPhones.length ? <MultiValueViewer values={rowPhones} type="phone" /> : '—'}</span><span>{rowEmails.length ? <MultiValueViewer values={rowEmails} type="email" /> : '—'}</span><span className={row.duplicate ? 'duplicate' : row.valid ? 'valid' : 'invalid'}>{row.duplicate ? 'Duplicate' : row.valid ? 'Ready' : row.issue}</span></div>
+  })}</div>{preview.truncated && <small className="muted-note">Showing 7 sample rows. All valid rows will be imported.</small>}</div><p className="mapping-note"><Sparkles size={15} /> Company, optional category and contact details, mobile numbers, email, website and social media columns are detected automatically.</p></>}{!preview && !previewMutation.isPending && <div className="mapping-note"><Sparkles size={15} /> Use company name, optional category and contact person, designation, mobile number 1, other mobile numbers, email, website and social media columns.</div>}<button className="text-link sample-template" onClick={() => void downloadSampleTemplate(expoId, setError)}><Download size={14} />Download sample template</button><div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!preview || preview.valid === 0 || importMutation.isPending} onClick={() => importMutation.mutate()}>{importMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import {preview?.valid || 0} leads</button></div></>}</Modal>
 }
 type ImportPreview = { total: number; valid: number; duplicates: number; invalid: number; truncated: boolean; headers: string[]; mapping: Record<string, string>; rows: { rowNumber: number; data: Record<string, unknown>; issue?: string; duplicate: boolean; valid: boolean }[] }
 

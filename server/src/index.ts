@@ -389,7 +389,7 @@ app.post('/api/expos/:expoId/import/preview', auth, memoryUpload.single('file'),
   }
   const headers = Object.keys(rows[0] || {})
   const mapped = rows.map((row) => mapExcelRow(row, mapping))
-  const existing = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email').lean()
+  const existing = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email otherEmails').lean()
   const duplicateSet = new Set<string>()
   for (const lead of existing) duplicateKeys(lead).forEach((key) => duplicateSet.add(key))
   let duplicates = 0
@@ -443,7 +443,7 @@ app.post('/api/expos/:expoId/import', auth, memoryUpload.single('file'), asyncRo
     } catch { return res.status(400).json({ message: 'Column mapping is invalid.' }) }
   }
   const mappedRows = rows.map((row) => mapExcelRow(row, mapping))
-  const current = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email').lean()
+  const current = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email otherEmails').lean()
   const keys = new Set(current.flatMap(duplicateKeys))
   const accepted: Record<string, unknown>[] = []
   let duplicates = 0, invalid = 0
@@ -493,12 +493,12 @@ app.post('/api/expos/:expoId/export', auth, asyncRoute(async (req, res) => {
   if (parsed.data.leadIds?.length) filter._id = { $in: parsed.data.leadIds }
   const leads = await Lead.find(filter).sort({ createdAt: -1 }).lean()
   const exportHeaders = ['Date', 'Company Name', 'Contact Person Name', 'Mobile', 'Email', 'Landline', 'Website', 'Service', 'Category', 'Budget', 'Source', 'Status']
-  const rows = leads.map(({ visitDate, createdAt, companyName, personName, primaryPhone, otherPhones, email, website }) => ({
+  const rows = leads.map(({ visitDate, createdAt, companyName, personName, primaryPhone, otherPhones, email, otherEmails, website }) => ({
     Date: new Date(visitDate || createdAt).toISOString().slice(0, 10),
     'Company Name': companyName || '',
     'Contact Person Name': personName || '',
     Mobile: [primaryPhone, ...(otherPhones || [])].filter(Boolean).join(', '),
-    Email: email || '',
+    Email: [email, ...(otherEmails || [])].filter(Boolean).join(', '),
     Landline: '',
     Website: website || '',
     Service: '',
@@ -525,7 +525,81 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 })
 
 const expoSchema = z.object({ name: z.string().trim().min(1).max(160), startDate: z.coerce.date().optional().or(z.literal('')), endDate: z.coerce.date().optional().or(z.literal('')), venue: z.string().max(180).optional(), city: z.string().max(120).optional(), organizer: z.string().max(180).optional(), website: z.string().max(300).optional(), description: z.string().max(2000).optional(), notes: z.string().max(5000).optional() }).transform((data) => ({ ...data, startDate: data.startDate || undefined, endDate: data.endDate || undefined }))
-const leadSchema = z.object({ personName: z.string().trim().max(160).optional(), visitDate: z.coerce.date().optional().or(z.literal('')), companyName: z.string().trim().max(180).optional(), designation: z.string().max(160).optional(), primaryPhone: z.string().max(40).optional(), otherPhones: z.array(z.string().max(40)).max(30).optional(), email: z.union([z.string().email().max(254), z.literal('')]).optional(), website: z.string().max(300).optional(), socialPlatform: z.string().max(80).optional(), socialProfile: z.string().max(300).optional(), socialMedia: z.object({ linkedin: z.string().max(300).optional(), instagram: z.string().max(300).optional(), facebook: z.string().max(300).optional(), youtube: z.string().max(300).optional(), other: z.string().max(300).optional() }).optional(), businessCategory: z.string().max(120).optional(), address: z.string().max(500).optional(), city: z.string().max(120).optional(), state: z.string().max(120).optional(), pincode: z.string().max(20).optional(), status: z.enum(statuses).optional().default('new'), notes: z.string().max(5000).optional(), source: z.string().max(120).optional() }).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim()), { message: 'A company name or contact person is required.' }).transform((data) => ({ ...data, visitDate: data.visitDate || undefined, otherPhones: (data.otherPhones || []).filter(Boolean), email: data.email || '' }))
+function extractEmails(val: unknown): string[] {
+  if (!val) return []
+  if (Array.isArray(val)) return [...new Set(val.flatMap(extractEmails))]
+  const text = String(val).trim()
+  if (!text) return []
+  const matches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)
+  if (matches && matches.length > 0) {
+    return [...new Set(matches.map((e) => e.trim().toLowerCase()))]
+  }
+  const parts = text.split(/[,;|\/\n\s]+/).map((s) => s.replace(/^[<(\[]+|[>)\].,;]+$/g, '').trim().toLowerCase()).filter(Boolean)
+  return [...new Set(parts.filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)))]
+}
+
+function extractPhones(val: unknown): string[] {
+  if (!val) return []
+  if (Array.isArray(val)) return [...new Set(val.flatMap(extractPhones))]
+  const text = String(val).trim()
+  if (!text) return []
+  const parts = text.split(/[,;|\/\n]+/).map((s) => s.trim()).filter(Boolean)
+  return [...new Set(parts.filter((s) => s.replace(/\D/g, '').length >= 5))]
+}
+
+const leadSchema = z.object({
+  personName: z.string().trim().max(160).optional(),
+  contactPerson: z.string().trim().max(160).optional(),
+  name: z.string().trim().max(160).optional(),
+  visitDate: z.coerce.date().optional().or(z.literal('')),
+  companyName: z.string().trim().max(180).optional(),
+  designation: z.string().max(160).optional(),
+  primaryPhone: z.string().max(200).optional(),
+  mobile: z.string().max(200).optional(),
+  phone: z.string().max(200).optional(),
+  otherPhones: z.array(z.string().max(200)).max(50).optional(),
+  email: z.string().max(2000).optional(),
+  otherEmails: z.array(z.string().max(254)).max(50).optional(),
+  website: z.string().max(300).optional(),
+  socialPlatform: z.string().max(80).optional(),
+  socialProfile: z.string().max(300).optional(),
+  socialMedia: z.object({
+    linkedin: z.string().max(300).optional(),
+    instagram: z.string().max(300).optional(),
+    facebook: z.string().max(300).optional(),
+    youtube: z.string().max(300).optional(),
+    other: z.string().max(300).optional(),
+  }).optional(),
+  businessCategory: z.string().max(120).optional(),
+  address: z.string().max(500).optional(),
+  city: z.string().max(120).optional(),
+  state: z.string().max(120).optional(),
+  pincode: z.string().max(20).optional(),
+  status: z.enum(statuses).optional().default('new'),
+  notes: z.string().max(5000).optional(),
+  source: z.string().max(120).optional(),
+}).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim()), {
+  message: 'A company name or contact person is required.',
+}).transform((data) => {
+  const personName = data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim() || ''
+  const emails = extractEmails([data.email, ...(data.otherEmails || [])])
+  const primaryEmail = emails[0] || (data.email && !data.email.includes('@') ? '' : (data.email?.trim() || ''))
+  const otherEmails = emails.length > 1 ? emails.slice(1) : (data.otherEmails || []).filter(Boolean)
+
+  const phones = extractPhones([data.primaryPhone, data.mobile, data.phone, ...(data.otherPhones || [])])
+  const primaryPhone = phones[0] || (data.primaryPhone?.trim() || data.mobile?.trim() || data.phone?.trim() || '')
+  const otherPhones = phones.length > 1 ? phones.slice(1) : (data.otherPhones || []).filter(Boolean)
+
+  return {
+    ...data,
+    personName,
+    visitDate: data.visitDate || undefined,
+    primaryPhone,
+    otherPhones,
+    email: primaryEmail,
+    otherEmails,
+  }
+})
 
 function leadQuery(req: AuthedRequest, expoId?: string) {
   const page = Math.max(1, Number(req.query.page) || 1)
@@ -538,7 +612,7 @@ function leadQuery(req: AuthedRequest, expoId?: string) {
   if (req.query.search) {
     const escaped = String(req.query.search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(escaped, 'i')
-    filter.$or = [{ personName: regex }, { companyName: regex }, { primaryPhone: regex }, { otherPhones: regex }, { email: regex }, { businessCategory: regex }, { city: regex }, { website: regex }, { notes: regex }]
+    filter.$or = [{ personName: regex }, { companyName: regex }, { primaryPhone: regex }, { otherPhones: regex }, { email: regex }, { otherEmails: regex }, { businessCategory: regex }, { city: regex }, { website: regex }, { notes: regex }]
   }
   const sortKey = String(req.query.sort || 'newest')
   const sort: Record<string, 1 | -1> = sortKey === 'oldest' ? { createdAt: 1 } : sortKey === 'name' ? { personName: 1 } : { createdAt: -1 }
@@ -548,7 +622,7 @@ const columnAliases: Record<string, string[]> = {
   visitDate: ['visitdate', 'datevisited', 'dateofvisit', 'visitedon', 'visit', 'date'],
   personName: ['personname', 'fullname', 'contactperson', 'contactpersonname', 'contactpersonifavailable', 'contactname', 'name'], companyName: ['companyname', 'company', 'businessname', 'organization', 'business'],
   designation: ['designation', 'designationifavailable', 'title', 'jobtitle', 'role'], primaryPhone: ['primaryphone', 'primarynumber', 'primarymobile', 'primarymobileno', 'primarymobilenumber', 'mobilenumber1', 'mobile1', 'mobileno1', 'mobile', 'mobileno', 'mobilenumber', 'phone1', 'phonenumber1', 'phone', 'number1', 'number', 'contactnumber1', 'contactnumber'],
-  otherPhones: ['otherphones', 'othernumbers', 'othermobilenumber', 'othermobilenumbers', 'othermobilenumberifavailable', 'othermobileno', 'othermobilenos', 'othernumber', 'alternatenumbers', 'alternatemobile', 'mobile2', 'mobilenumber2', 'alternatephone', 'otherphone'], otherPhones3: ['mobile3', 'mobilenumber3', 'phone2'], email: ['email', 'emailaddress', 'emailid', 'emailifavailable'],
+  otherPhones: ['otherphones', 'othernumbers', 'othermobilenumber', 'othermobilenumbers', 'othermobilenumberifavailable', 'othermobileno', 'othermobilenos', 'othernumber', 'alternatenumbers', 'alternatemobile', 'mobile2', 'mobilenumber2', 'alternatephone', 'otherphone'], otherPhones3: ['mobile3', 'mobilenumber3', 'phone2'], email: ['email', 'emailaddress', 'emailid', 'emailifavailable', 'emails'],
   website: ['website', 'websiteifavailable', 'web', 'url', 'companywebsite'], socialPlatform: ['socialmediaplatform', 'socialmediaplatformifavailable', 'socialplatform', 'socialnetwork'], socialProfile: ['socialmedia', 'socialmediaprofile', 'socialmediaifavailable', 'socialmediaifavailableoncard', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'], businessCategory: ['businesscategory', 'businesscategoryoptional', 'businesscategoryifavailable', 'category', 'categoryifavailable', 'categoryofbusiness', 'categoryofbusinessifavailable', 'industry'], city: ['city', 'town'], state: ['state', 'region'],
   pincode: ['pincode', 'zipcode', 'postalcode'], address: ['address', 'location'], notes: ['notes', 'note', 'remarks'], status: ['status', 'leadstatus'],
   linkedin: ['linkedin', 'linkedinurl'], instagram: ['instagram', 'instagramurl'], facebook: ['facebook', 'facebookurl'], youtube: ['youtube', 'youtubeurl'],
@@ -588,21 +662,38 @@ function mapExcelRow(row: Record<string, unknown>, mapping: Record<string, strin
   const rawDate = mapping.visitDate ? row[mapping.visitDate] : Object.entries(row).find(([key]) => columnAliases.visitDate.includes(normalizeColumn(key)))?.[1]
   const rawStatus = pick('status', 'status', 'leadstatus').toLowerCase()
   const status: LeadStatus = /called/.test(rawStatus) ? 'called' : /notinterested/.test(rawStatus) ? 'not-interested' : /alreadygood|goodpresence/.test(rawStatus) ? 'good-presence' : /interested/.test(rawStatus) ? 'interested' : 'new'
+
+  const rawPrimaryPhone = pick('primaryPhone', 'primaryphone', 'primarynumber', 'mobilenumber1', 'mobile', 'mobilenumber', 'phone', 'number', 'contactnumber')
+  const allPhonesFromPrimary = extractPhones(rawPrimaryPhone)
+  const primaryPhone = allPhonesFromPrimary[0] || rawPrimaryPhone
   const otherPhoneColumns = Object.keys(row).filter(isOtherPhoneColumn)
   if (mapping.otherPhones && row[mapping.otherPhones] !== undefined) otherPhoneColumns.push(mapping.otherPhones)
-  const extras = [...new Set(otherPhoneColumns)].flatMap((column) => String(row[column] ?? '').split(/[;,|\n]/).map((number) => number.trim()).filter(Boolean))
+  const extraPhones = [
+    ...allPhonesFromPrimary.slice(1),
+    ...otherPhoneColumns.flatMap((column) => extractPhones(row[column]))
+  ]
+  const otherPhones = [...new Set(extraPhones)].filter((p) => p !== primaryPhone)
+
+  const rawEmail = pick('email', 'email', 'emailaddress')
+  const allEmails = extractEmails(rawEmail)
+  const email = allEmails[0] || rawEmail
+  const otherEmails = allEmails.slice(1)
+
   return {
     visitDate: excelVisitDate(rawDate), personName: pick('personName', 'personname', 'fullname', 'name', 'contactname'), companyName: pick('companyName', 'companyname', 'company', 'businessname', 'organization'), designation: pick('designation', 'designation', 'title', 'jobtitle'),
-    primaryPhone: pick('primaryPhone', 'primaryphone', 'primarynumber', 'mobilenumber1', 'mobile', 'mobilenumber', 'phone', 'number', 'contactnumber'), otherPhones: extras,
-    email: pick('email', 'email', 'emailaddress'), website: pick('website', 'website', 'web', 'url'), businessCategory: pick('businessCategory', 'businesscategory', 'category', 'industry'),
+    primaryPhone, otherPhones,
+    email, otherEmails, website: pick('website', 'website', 'web', 'url'), businessCategory: pick('businessCategory', 'businesscategory', 'category', 'industry'),
     socialPlatform: pick('socialPlatform', 'socialmediaplatform', 'socialplatform', 'socialnetwork') || (pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink') ? 'Social media' : ''), socialProfile: pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'),
     socialMedia: { linkedin: pick('linkedin', 'linkedin', 'linkedinurl'), instagram: pick('instagram', 'instagram', 'instagramurl'), facebook: pick('facebook', 'facebook', 'facebookurl'), youtube: pick('youtube', 'youtube', 'youtubeurl') },
     city: pick('city', 'city', 'town'), state: pick('state', 'state', 'region'), pincode: pick('pincode', 'pincode', 'zipcode', 'postalcode'), address: pick('address', 'address', 'location'), notes: pick('notes', 'notes', 'note', 'remarks'), status, source: 'Excel import',
   }
 }
-function duplicateKeys(lead: { personName?: string | null; companyName?: string | null; primaryPhone?: string | null; otherPhones?: string[] | null; email?: string | null }) {
+function duplicateKeys(lead: { personName?: string | null; companyName?: string | null; primaryPhone?: string | null; otherPhones?: string[] | null; email?: string | null; otherEmails?: string[] | null }) {
   const keys = [lead.primaryPhone, ...(lead.otherPhones || [])].map((item) => (item || '').replace(/\D/g, '')).filter((phone) => phone.length >= 7).map((phone) => `phone:${phone}`)
-  if (lead.email?.trim()) keys.push(`email:${lead.email.trim().toLowerCase()}`)
+  const emails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean)
+  for (const item of emails) {
+    if (item?.trim()) keys.push(`email:${item.trim().toLowerCase()}`)
+  }
   if (lead.personName?.trim() && lead.companyName?.trim()) keys.push(`name:${lead.personName.trim().toLowerCase()}|${lead.companyName.trim().toLowerCase()}`)
   return keys.length ? keys : [`name:${(lead.personName || '').trim().toLowerCase()}|${(lead.companyName || '').trim().toLowerCase()}`]
 }

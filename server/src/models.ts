@@ -38,6 +38,7 @@ const leadSchema = new Schema({
   primaryPhone: { type: String, trim: true, maxlength: 40 },
   otherPhones: { type: [String], default: [] },
   email: { type: String, trim: true, lowercase: true, maxlength: 254 },
+  otherEmails: { type: [String], default: [] },
   website: { type: String, trim: true, maxlength: 300 },
   socialPlatform: { type: String, trim: true, maxlength: 80 },
   socialProfile: { type: String, trim: true, maxlength: 300 },
