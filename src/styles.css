@@ -263,27 +263,319 @@
 .contact-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#5a554c}
 .contact-chip svg{color:#9d978d;flex-shrink:0}
 .preview-table>div{grid-template-columns:1fr 1.2fr 1fr 1.2fr 1.4fr .8fr !important}
-.contact-row .multi-value-viewer{margin-top:3px !important;display:inline-flex !important;align-items:center !important;gap:8px !important;font-size:13px !important;font-weight:600 !important}
-.contact-row strong,.contact-row>div>a,.contact-row .multi-value-viewer .primary-value,.contact-row .multi-value-viewer .primary-value a{font-family:Inter, "Segoe UI", sans-serif !important;font-size:13px !important;font-weight:600 !important;color:#2c2823 !important;line-height:1.35 !important;overflow-wrap:anywhere !important;text-decoration:none !important}
-.contact-row>div>a:hover,.contact-row .multi-value-viewer .primary-value a:hover{color:var(--orange) !important;text-decoration:underline !important}
-.contact-row .multi-value-badge{font-family:Inter, "Segoe UI", sans-serif !important;font-size:11px !important;font-weight:600 !important;padding:2.5px 8.5px !important;border-radius:8px !important;line-height:1.2 !important}
-.contact-row small{font-size:11.5px !important;color:#8c8780 !important;font-weight:500 !important;margin-bottom:2px !important}
-.contact-row{min-height:64px !important;gap:13px !important}
-.contact-icon{width:35px !important;height:35px !important;border-radius:10px !important}
-.detail-card{padding:22px 24px !important}
-.detail-card .section-heading{margin-bottom:16px !important}
-.detail-card .section-heading h2{font-size:17px !important;letter-spacing:-.3px !important}
-.detail-card .eyebrow{font-size:10.5px !important;letter-spacing:1.2px !important}
-.lead-detail-head h1{font-size:28px !important;letter-spacing:-.6px !important}
-.lead-detail-head p{font-size:13px !important;color:#79746d !important;margin-top:6px !important}
-.lead-detail-head .eyebrow{font-size:11px !important;letter-spacing:1.3px !important}
-.lead-detail-head .status-pill{height:32px !important;font-size:11.5px !important;padding:0 12px !important}
-.lead-detail-actions .button{height:38px !important;font-size:12px !important;padding:0 16px !important;border-radius:10px !important}
-.lead-detail-actions .icon-button{width:38px !important;height:38px !important;border-radius:10px !important}
-.lead-details-page .back-link{font-size:12px !important;gap:8px !important}
-.lead-notes{font-size:13px !important;line-height:1.7 !important;color:#666159 !important}
-.social-links a{font-size:11.5px !important;padding:7px 11px !important;border-radius:8px !important}
-.source-line{font-size:11px !important;color:#9c978f !important}
-.detail-grid span{font-size:11.5px !important}
-.detail-grid strong{font-size:13px !important}
-.detail-description p{font-size:12.5px !important}
+/* Desktop typography and scaling */
+@media (min-width: 641px) {
+  .contact-row .multi-value-viewer{margin-top:3px !important;display:inline-flex !important;align-items:center !important;gap:8px !important;font-size:13px !important;font-weight:600 !important}
+  .contact-row strong,.contact-row>div>a,.contact-row .multi-value-viewer .primary-value,.contact-row .multi-value-viewer .primary-value a{font-family:Inter, "Segoe UI", sans-serif !important;font-size:13px !important;font-weight:600 !important;color:#2c2823 !important;line-height:1.35 !important;overflow-wrap:anywhere !important;text-decoration:none !important}
+  .contact-row>div>a:hover,.contact-row .multi-value-viewer .primary-value a:hover{color:var(--orange) !important;text-decoration:underline !important}
+  .contact-row .multi-value-badge{font-family:Inter, "Segoe UI", sans-serif !important;font-size:11px !important;font-weight:600 !important;padding:2.5px 8.5px !important;border-radius:8px !important;line-height:1.2 !important}
+  .contact-row small{font-size:11.5px !important;color:#8c8780 !important;font-weight:500 !important;margin-bottom:2px !important}
+  .contact-row{min-height:64px !important;gap:13px !important}
+  .contact-icon{width:35px !important;height:35px !important;border-radius:10px !important}
+  .detail-card{padding:22px 24px !important}
+  .detail-card .section-heading{margin-bottom:16px !important}
+  .detail-card .section-heading h2{font-size:17px !important;letter-spacing:-.3px !important}
+  .detail-card .eyebrow{font-size:10.5px !important;letter-spacing:1.2px !important}
+  .lead-detail-head h1{font-size:28px !important;letter-spacing:-.6px !important}
+  .lead-detail-head p{font-size:13px !important;color:#79746d !important;margin-top:6px !important}
+  .lead-detail-head .eyebrow{font-size:11px !important;letter-spacing:1.3px !important}
+  .lead-detail-head .status-pill{height:32px !important;font-size:11.5px !important;padding:0 12px !important}
+  .lead-detail-actions .button{height:38px !important;font-size:12px !important;padding:0 16px !important;border-radius:10px !important}
+  .lead-detail-actions .icon-button{width:38px !important;height:38px !important;border-radius:10px !important}
+  .lead-details-page .back-link{font-size:12px !important;gap:8px !important}
+  .lead-notes{font-size:13px !important;line-height:1.7 !important;color:#666159 !important}
+  .social-links a{font-size:11.5px !important;padding:7px 11px !important;border-radius:8px !important}
+  .source-line{font-size:11px !important;color:#9c978f !important}
+  .detail-grid span{font-size:11.5px !important}
+  .detail-grid strong{font-size:13px !important}
+  .detail-description p{font-size:12.5px !important}
+}
+
+/* Tablet viewports (641px - 960px) */
+@media (min-width: 641px) and (max-width: 960px) {
+  .lead-detail-grid {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+  .detail-card {
+    padding: 20px 20px !important;
+  }
+  .contact-row .multi-value-viewer {
+    flex-wrap: wrap !important;
+    gap: 7px !important;
+  }
+  .contact-row .multi-value-viewer .primary-value {
+    max-width: 100% !important;
+    word-break: break-all !important;
+  }
+}
+
+/* Mobile responsive rules (max-width: 640px) */
+@media (max-width: 640px) {
+  body, #root, .app-frame, .main-shell {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+  .page-area {
+    padding: 16px 14px 115px !important;
+    max-width: 100% !important;
+  }
+  .lead-details-page {
+    padding-bottom: 115px !important;
+  }
+  .lead-details-page .back-link {
+    font-size: 11.5px !important;
+    margin-bottom: 14px !important;
+    gap: 6px !important;
+  }
+  .lead-detail-head {
+    display: grid !important;
+    grid-template-columns: auto 1fr !important;
+    align-items: center !important;
+    gap: 12px !important;
+  }
+  .lead-detail-head .detail-avatar {
+    width: 48px !important;
+    height: 48px !important;
+    font-size: 15px !important;
+    flex-shrink: 0 !important;
+  }
+  .lead-detail-head > div {
+    min-width: 0 !important;
+    grid-column: 2 !important;
+  }
+  .lead-detail-head .eyebrow {
+    font-size: 9.5px !important;
+    letter-spacing: 1.1px !important;
+  }
+  .lead-detail-head h1 {
+    font-size: 21px !important;
+    line-height: 1.25 !important;
+    letter-spacing: -.5px !important;
+    margin-top: 3px !important;
+    word-break: break-word !important;
+  }
+  .lead-detail-head p {
+    font-size: 11.5px !important;
+    color: #837e76 !important;
+    margin-top: 3px !important;
+  }
+  .lead-detail-head .status-pill {
+    grid-column: 1 / -1 !important;
+    justify-self: start !important;
+    margin-top: 6px !important;
+    height: 30px !important;
+    font-size: 11px !important;
+    padding: 0 10px !important;
+    max-width: none !important;
+  }
+  .lead-detail-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin: 14px 0 18px !important;
+  }
+  .lead-detail-actions .button {
+    flex: 1 1 auto !important;
+    min-width: 90px !important;
+    height: 38px !important;
+    font-size: 11.5px !important;
+    padding: 0 12px !important;
+    border-radius: 9px !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+  }
+  .lead-detail-actions .icon-button {
+    flex: 0 0 38px !important;
+    width: 38px !important;
+    height: 38px !important;
+    border-radius: 9px !important;
+  }
+  .lead-detail-grid {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .detail-card {
+    padding: 16px 14px !important;
+    border-radius: 14px !important;
+  }
+  .detail-card .section-heading {
+    margin-bottom: 12px !important;
+  }
+  .detail-card .section-heading h2 {
+    font-size: 15px !important;
+  }
+  .detail-card .eyebrow {
+    font-size: 9.5px !important;
+  }
+  .contact-row {
+    min-height: 56px !important;
+    gap: 11px !important;
+    padding: 8px 0 !important;
+  }
+  .contact-icon {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 9px !important;
+    flex-shrink: 0 !important;
+  }
+  .contact-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+  .contact-row > div {
+    min-width: 0 !important;
+    flex: 1 !important;
+  }
+  .contact-row small {
+    font-size: 10px !important;
+    color: #8e8a83 !important;
+    margin-bottom: 2px !important;
+  }
+  .contact-row strong,
+  .contact-row > div > a,
+  .contact-row .multi-value-viewer .primary-value,
+  .contact-row .multi-value-viewer .primary-value a {
+    font-family: Inter, "Segoe UI", sans-serif !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    color: #2c2823 !important;
+    line-height: 1.35 !important;
+    word-break: break-word !important;
+    text-decoration: none !important;
+  }
+  .contact-row > div > a:hover,
+  .contact-row .multi-value-viewer .primary-value a:hover {
+    color: var(--orange) !important;
+    text-decoration: underline !important;
+  }
+  .contact-row .multi-value-viewer {
+    margin-top: 3px !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 6px !important;
+    max-width: 100% !important;
+  }
+  .contact-row .multi-value-viewer .primary-value {
+    max-width: 100% !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .contact-row .multi-value-badge {
+    font-family: Inter, "Segoe UI", sans-serif !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    padding: 2px 7px !important;
+    border-radius: 7px !important;
+    white-space: nowrap !important;
+    line-height: 1.2 !important;
+  }
+  .multi-value-dropdown {
+    position: fixed !important;
+    top: auto !important;
+    bottom: 74px !important;
+    left: 14px !important;
+    right: 14px !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: auto !important;
+    border-radius: 14px !important;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.22) !important;
+    z-index: 100 !important;
+    padding: 12px !important;
+  }
+  .contact-action {
+    width: 26px !important;
+    height: 26px !important;
+    flex-shrink: 0 !important;
+  }
+  .lead-notes {
+    font-size: 12px !important;
+    line-height: 1.6 !important;
+    color: #615c54 !important;
+  }
+  .social-links a {
+    font-size: 11px !important;
+    padding: 6px 9px !important;
+    border-radius: 7px !important;
+  }
+  .source-line {
+    font-size: 10px !important;
+    margin-top: 14px !important;
+  }
+  .lead-contact-line {
+    gap: 6px !important;
+  }
+  .contact-chip {
+    font-size: 11px !important;
+  }
+}
+
+/* Extra small phones (<= 380px, e.g. iPhone SE / 320px) */
+@media (max-width: 380px) {
+  .page-area {
+    padding: 12px 10px 115px !important;
+  }
+  .lead-details-page {
+    padding-bottom: 115px !important;
+  }
+  .detail-card {
+    padding: 14px 10px !important;
+    border-radius: 12px !important;
+  }
+  .lead-detail-head .detail-avatar {
+    width: 42px !important;
+    height: 42px !important;
+    font-size: 14px !important;
+  }
+  .lead-detail-head h1 {
+    font-size: 18px !important;
+  }
+  .lead-detail-actions {
+    gap: 6px !important;
+  }
+  .lead-detail-actions .button {
+    min-width: 75px !important;
+    font-size: 11px !important;
+    padding: 0 8px !important;
+    height: 36px !important;
+  }
+  .lead-detail-actions .icon-button {
+    width: 36px !important;
+    height: 36px !important;
+    flex: 0 0 36px !important;
+  }
+  .contact-row {
+    gap: 8px !important;
+    min-height: 52px !important;
+  }
+  .contact-icon {
+    width: 28px !important;
+    height: 28px !important;
+    flex: 0 0 28px !important;
+  }
+  .contact-icon svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+  .contact-row strong,
+  .contact-row > div > a,
+  .contact-row .multi-value-viewer .primary-value,
+  .contact-row .multi-value-viewer .primary-value a {
+    font-size: 11.5px !important;
+  }
+  .contact-row .multi-value-badge {
+    font-size: 9.5px !important;
+    padding: 1.5px 6px !important;
+  }
+  .multi-value-dropdown {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 70px !important;
+    padding: 10px !important;
+  }
+}
+
+

@@ -254,7 +254,6 @@ function DashboardInsights({ stats }: { stats?: Record<string, number> }) {
             <div className="quick-outreach-list">
               {recentLeadsQuery.data.items.slice(0, 4).map((lead) => {
                 const displayName = lead.personName || lead.companyName || 'Inquiry Contact'
-                const phone = lead.primaryPhone?.replace(/\D/g, '') || ''
                 return (
                   <div className="outreach-item" key={lead._id}>
                     <span className={`avatar outreach-avatar ${avatarTone(displayName)}`}>
@@ -276,7 +275,7 @@ function DashboardInsights({ stats }: { stats?: Record<string, number> }) {
                           <a href={`tel:${lead.primaryPhone}`} className="icon-action-btn phone" title={`Call ${displayName}`} aria-label="Call">
                             <Phone size={14} />
                           </a>
-                          <a href={`https://wa.me/${phone}`} target="_blank" rel="noreferrer" className="icon-action-btn whatsapp" title={`WhatsApp ${displayName}`} aria-label="WhatsApp">
+                          <a href={lead.whatsappUrl || formatWhatsAppUrl(lead.primaryPhone)} target="_blank" rel="noreferrer" className="icon-action-btn whatsapp" title={`WhatsApp ${displayName}`} aria-label="WhatsApp">
                             <Zap size={14} />
                           </a>
                         </>
@@ -462,6 +461,24 @@ function LeadsPage() {
   return <div className="page-content"><div className="page-title-row"><div><span className="eyebrow">YOUR CONTACTS</span><h1>All leads</h1><p>Search across every expo and keep the next step in view.</p></div></div><div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder="Search name, company, phone, email…" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select className="select-control" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}><option value="">Every status</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="result-count">{data.data?.total ?? 0} contacts</span></div>{data.isLoading ? <LoadingRows /> : data.data?.items.length ? <><LeadList leads={data.data.items} showExpo />{(data.data.pages > 1) && <div className="pagination"><span>Page {page} of {data.data.pages}</span><button className="icon-button" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><button className="icon-button" disabled={page >= data.data.pages} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div>}</> : <EmptyState icon={<Users size={21} />} title={search ? 'No leads found' : 'Your lead book is empty'} text={search ? 'Try a different search.' : 'Add leads from an expo workspace or import an Excel list.'} action={<Link className="button secondary small" to="/expos"><Building2 size={15} />Open an expo</Link>} />}</div>
 }
 
+function formatWhatsAppUrl(rawPhone?: string): string {
+  if (!rawPhone) return ''
+  let digits = rawPhone.replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) digits = `91${digits}`
+  else if (digits.length === 11 && digits.startsWith('0')) digits = `91${digits.slice(1)}`
+  return `https://wa.me/${digits}`
+}
+
+function formatDisplayPhone(rawPhone?: string): string {
+  if (!rawPhone) return ''
+  const trimmed = rawPhone.trim()
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1)
+  return trimmed.replace(/^\+91[\s-]*/, '')
+}
+
 function MultiValueViewer({ values, type = 'text', label }: { values: string[]; type?: 'email' | 'phone' | 'text'; label?: string }) {
   const [open, setOpen] = useState(false)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
@@ -495,7 +512,7 @@ function MultiValueViewer({ values, type = 'text', label }: { values: string[]; 
 
   const renderLink = (val: string) => {
     if (type === 'email') return <a href={`mailto:${val}`} onClick={(e) => e.stopPropagation()}>{val}</a>
-    if (type === 'phone') return <a href={`tel:${val}`} onClick={(e) => e.stopPropagation()}>{val}</a>
+    if (type === 'phone') return <a href={`tel:${val}`} onClick={(e) => e.stopPropagation()}>{formatDisplayPhone(val)}</a>
     return <span>{val}</span>
   }
 
@@ -562,7 +579,7 @@ function LeadList({ leads, compact = false, showExpo = false, selected = [], onS
           <strong>{displayName}</strong>
           <span>{lead.personName ? (lead.companyName || 'Independent contact') : (lead.businessCategory || 'Company')}{lead.personName && lead.businessCategory ? ` · ${lead.businessCategory}` : ''}</span>
           <div className="lead-contact-line">
-            {allPhones.length > 0 && <span className="contact-chip phone-chip"><Phone size={12} /><MultiValueViewer values={allPhones} type="phone" label="phones" /></span>}
+            {allPhones.length > 0 && <span className="contact-chip phone-chip"><Phone size={12} /><MultiValueViewer values={allPhones.map(formatDisplayPhone)} type="phone" label="phones" /></span>}
             {allEmails.length > 0 && <span className="contact-chip email-chip"><Mail size={12} /><MultiValueViewer values={allEmails} type="email" label="emails" /></span>}
           </div>
           {showExpo && typeof lead.expoId !== 'string' && <small className="lead-expo-name"><Building2 size={12} />{lead.expoId.name}</small>}
@@ -588,8 +605,8 @@ function LeadDetails() {
   const allPhones = [lead.primaryPhone, ...(lead.otherPhones || [])].filter(Boolean) as string[]
   const allEmails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean) as string[]
   return <div className="page-content lead-details-page"><button className="back-link" onClick={() => navigate(expo ? `/expos/${expo._id}?tab=leads` : '/leads')}><ArrowLeft size={16} />{expo?.name || 'All leads'}</button><div className="lead-detail-head"><span className={`avatar detail-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span><div><span className="eyebrow">LEAD PROFILE</span><h1>{displayName}</h1><p>{lead.personName && lead.companyName ? lead.companyName : (lead.businessCategory || lead.designation || 'Company contact')}{lead.designation && lead.personName ? ` · ${lead.designation}` : ''}</p></div><StatusPill status={lead.status} onChange={(status) => api(`/leads/${lead._id}/status`, json('PATCH', { status })).then(() => { notifyUser('Status updated'); void qc.invalidateQueries() }).catch((e: Error) => notifyUser(e.message, 'error'))} /></div>
-    <div className="lead-detail-actions">{allPhones.length > 0 && <a className="button soft-green" href={`tel:${allPhones[0]}`}><Phone size={16} />Call</a>}{allPhones.length > 0 && <a className="button soft-green" href={`https://wa.me/${allPhones[0].replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><Zap size={16} />WhatsApp</a>}{allEmails.length > 0 && <a className="button soft-blue" href={`mailto:${allEmails[0]}`}><Mail size={16} />Email {allEmails.length > 1 ? `(${allEmails.length})` : ''}</a>}<button className="button secondary" onClick={() => setEdit(true)}><Pencil size={16} />Edit details</button><button className="icon-button" title="Delete lead" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /></button></div>
-    <div className="lead-detail-grid"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">CONTACT</span><h2>How to reach them</h2></div></div><ContactRow icon={<Phone size={17} />} label="Mobile number(s)" value={allPhones[0] || 'Not added'} extraValues={allPhones.length > 1 ? allPhones : undefined} type="phone" href={allPhones[0] ? `tel:${allPhones[0]}` : undefined} /><ContactRow icon={<Mail size={17} />} label="Email address" value={allEmails[0] || 'Not added'} extraValues={allEmails.length > 1 ? allEmails : undefined} type="email" href={allEmails[0] ? `mailto:${allEmails[0]}` : undefined} /><ContactRow icon={<Globe2 size={17} />} label="Website" value={lead.website || 'Not added'} href={lead.website ? (lead.website.startsWith('http') ? lead.website : `https://${lead.website}`) : undefined} external /></section>
+    <div className="lead-detail-actions">{allPhones.length > 0 && <a className="button soft-green" href={`tel:${allPhones[0]}`}><Phone size={16} />Call</a>}{allPhones.length > 0 && <a className="button soft-green" href={lead.whatsappUrl || formatWhatsAppUrl(allPhones[0])} target="_blank" rel="noreferrer"><Zap size={16} />WhatsApp</a>}{allEmails.length > 0 && <a className="button soft-blue" href={`mailto:${allEmails[0]}`}><Mail size={16} />Email {allEmails.length > 1 ? `(${allEmails.length})` : ''}</a>}<button className="button secondary" onClick={() => setEdit(true)}><Pencil size={16} />Edit details</button><button className="icon-button" title="Delete lead" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /></button></div>
+    <div className="lead-detail-grid"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">CONTACT</span><h2>How to reach them</h2></div></div><ContactRow icon={<Phone size={17} />} label="Mobile number(s)" value={formatDisplayPhone(allPhones[0]) || 'Not added'} extraValues={allPhones.length > 1 ? allPhones.map(formatDisplayPhone) : undefined} type="phone" href={allPhones[0] ? `tel:${allPhones[0]}` : undefined} /><ContactRow icon={<Mail size={17} />} label="Email address" value={allEmails[0] || 'Not added'} extraValues={allEmails.length > 1 ? allEmails : undefined} type="email" href={allEmails[0] ? `mailto:${allEmails[0]}` : undefined} /><ContactRow icon={<Globe2 size={17} />} label="Website" value={lead.website || 'Not added'} href={lead.website ? (lead.website.startsWith('http') ? lead.website : `https://${lead.website}`) : undefined} external /></section>
       <section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">BUSINESS</span><h2>Company information</h2></div></div><ContactRow icon={<CalendarDays size={17} />} label="Date visited" value={safeDate(lead.visitDate)} /><ContactRow icon={<Building2 size={17} />} label="Company" value={lead.companyName || 'Not added'} /><ContactRow icon={<Tags size={17} />} label="Category" value={lead.businessCategory || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Contact person" value={lead.personName || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Designation" value={lead.designation || 'Not added'} /><ContactRow icon={<MapPin size={17} />} label="Address" value={[lead.address, lead.city, lead.state, lead.pincode].filter(Boolean).join(', ') || 'Not added'} />{expo && <ContactRow icon={<Building2 size={17} />} label="Expo" value={expo.name} href={`/expos/${expo._id}?tab=overview`} />}</section>
       <section className="panel detail-card notes-card"><div className="section-heading"><div><span className="eyebrow">CONTEXT</span><h2>Notes & social</h2></div></div><p className="lead-notes">{lead.notes || 'No notes yet. Add details from your conversation so the next follow-up feels personal.'}</p><div className="social-links">{lead.socialPlatform && (lead.socialProfile ? <a href={lead.socialProfile.startsWith('http') ? lead.socialProfile : `https://${lead.socialProfile}`} target="_blank" rel="noreferrer">{lead.socialPlatform}<ArrowUpRight size={13} /></a> : <span>{lead.socialPlatform}</span>)}{Object.entries(lead.socialMedia || {}).filter(([, value]) => value).map(([key, value]) => <a key={key} href={String(value).startsWith('http') ? String(value) : `https://${value}`} target="_blank" rel="noreferrer">{key}<ArrowUpRight size={13} /></a>)}</div><small className="source-line">Added {safeDate(lead.createdAt)} · {lead.source || 'Manual entry'}</small></section></div>
     {edit && <LeadForm expoId={expo?._id || String(lead.expoId)} initial={lead} onClose={() => setEdit(false)} />}{confirmDelete && <ConfirmModal title="Delete this lead?" text={`This will permanently remove ${displayName} from your workspace.`} confirm="Delete lead" onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate()} busy={del.isPending} />}</div>

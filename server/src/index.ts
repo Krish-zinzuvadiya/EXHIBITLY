@@ -300,7 +300,7 @@ app.get('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
   if (!(await getOwnedExpo(expoId, req.userId!))) return res.status(404).json({ message: 'Expo not found.' })
   const query = leadQuery(req, expoId)
   const [items, total] = await Promise.all([Lead.find(query.filter).sort(query.sort).skip(query.skip).limit(query.limit).lean(), Lead.countDocuments(query.filter)])
-  return res.json({ items, total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
+  return res.json({ items: items.map(sanitizeLead), total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
 }))
 app.get('/api/expos/:expoId/filters', auth, asyncRoute(async (req, res) => {
   const expoId = param(req.params.expoId)
@@ -319,33 +319,33 @@ app.post('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
   if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
   const lead = await Lead.create({ ...parsed.data, ...userOnly(req), expoId: expo._id, source: parsed.data.source || 'Manual entry' })
   await recordActivity(req.userId!, `Added ${lead.personName || lead.companyName || 'a lead'} to ${expo.name}`, { action: 'lead.created', expoId: expo._id, leadId: lead._id })
-  return res.status(201).json(lead)
+  return res.status(201).json(sanitizeLead(lead.toObject()))
 }))
 app.get('/api/leads', auth, asyncRoute(async (req, res) => {
   const query = leadQuery(req)
   const [items, total] = await Promise.all([Lead.find(query.filter).sort(query.sort).skip(query.skip).limit(query.limit).populate('expoId', 'name').lean(), Lead.countDocuments(query.filter)])
-  return res.json({ items, total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
+  return res.json({ items: items.map(sanitizeLead), total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
 }))
 app.get('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
   const lead = await Lead.findOne({ _id: param(req.params.leadId), ...userOnly(req) }).populate('expoId', 'name startDate city venue').lean()
-  return lead ? res.json(lead) : res.status(404).json({ message: 'Lead not found.' })
+  return lead ? res.json(sanitizeLead(lead)) : res.status(404).json({ message: 'Lead not found.' })
 }))
 app.put('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
   const parsed = leadSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
-  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true })
+  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true }).lean()
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
   await recordActivity(req.userId!, `Updated ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.updated', expoId: lead.expoId, leadId: lead._id })
-  return res.json(lead)
+  return res.json(sanitizeLead(lead))
 }))
 app.patch('/api/leads/:leadId/status', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId)) || !isStatus(req.body.status)) return res.status(400).json({ message: 'Choose a valid lead status.' })
-  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, { status: req.body.status }, { new: true })
+  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, { status: req.body.status }, { new: true }).lean()
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
   await recordActivity(req.userId!, `${lead.personName || lead.companyName || 'A lead'} moved to ${statusLabel(lead.status)}`, { action: 'lead.status', expoId: lead.expoId, leadId: lead._id, metadata: { status: lead.status } })
-  return res.json(lead)
+  return res.json(sanitizeLead(lead))
 }))
 app.post('/api/leads/bulk-status', auth, asyncRoute(async (req, res) => {
   const parsed = z.object({ ids: z.array(z.string().refine(objectId)).min(1).max(500), status: z.enum(statuses) }).safeParse(req.body)
@@ -538,12 +538,46 @@ function extractEmails(val: unknown): string[] {
   return [...new Set(parts.filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)))]
 }
 
+function toWhatsAppNumber(val?: string | null): string {
+  if (!val) return ''
+  let digits = String(val).replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) return `91${digits}`
+  if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`
+  if (digits.length === 12 && digits.startsWith('91')) return digits
+  return digits
+}
+
+function cleanDisplayPhone(val?: string | null): string {
+  if (!val) return ''
+  const trimmed = String(val).trim()
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1)
+  return trimmed.replace(/^\+91[\s-]*/, '')
+}
+
+function sanitizeLead<T extends Record<string, any>>(lead: T): T {
+  if (!lead) return lead
+  const primaryPhone = cleanDisplayPhone(lead.primaryPhone)
+  const otherPhones = Array.isArray(lead.otherPhones) ? lead.otherPhones.map(cleanDisplayPhone) : []
+  const whatsappPhone = toWhatsAppNumber(lead.primaryPhone)
+  const whatsappUrl = whatsappPhone ? `https://wa.me/${whatsappPhone}` : ''
+  return {
+    ...lead,
+    primaryPhone,
+    otherPhones,
+    whatsappPhone,
+    whatsappUrl,
+  }
+}
+
 function extractPhones(val: unknown): string[] {
   if (!val) return []
   if (Array.isArray(val)) return [...new Set(val.flatMap(extractPhones))]
   const text = String(val).trim()
   if (!text) return []
-  const parts = text.split(/[,;|\/\n]+/).map((s) => s.trim()).filter(Boolean)
+  const parts = text.split(/[,;|\/\n]+/).map((s) => cleanDisplayPhone(s.trim())).filter(Boolean)
   return [...new Set(parts.filter((s) => s.replace(/\D/g, '').length >= 5))]
 }
 
@@ -587,8 +621,8 @@ const leadSchema = z.object({
   const otherEmails = emails.length > 1 ? emails.slice(1) : (data.otherEmails || []).filter(Boolean)
 
   const phones = extractPhones([data.primaryPhone, data.mobile, data.phone, ...(data.otherPhones || [])])
-  const primaryPhone = phones[0] || (data.primaryPhone?.trim() || data.mobile?.trim() || data.phone?.trim() || '')
-  const otherPhones = phones.length > 1 ? phones.slice(1) : (data.otherPhones || []).filter(Boolean)
+  const primaryPhone = cleanDisplayPhone(phones[0] || (data.primaryPhone?.trim() || data.mobile?.trim() || data.phone?.trim() || ''))
+  const otherPhones = (phones.length > 1 ? phones.slice(1) : (data.otherPhones || []).filter(Boolean)).map(cleanDisplayPhone)
 
   return {
     ...data,
