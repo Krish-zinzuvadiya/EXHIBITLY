@@ -283,6 +283,17 @@ app.delete('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
   return res.json({ ok: true })
 }))
 
+app.post('/api/expos/:expoId/reset-status', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  const targetStatus = isStatus(req.body.status) ? req.body.status : 'new'
+  const result = await Lead.updateMany({ expoId: expo._id, ...userOnly(req) }, { status: targetStatus })
+  await recordActivity(req.userId!, `Set all ${result.modifiedCount} leads in ${expo.name} to ${statusLabel(targetStatus)}`, { action: 'expo.reset-status', expoId: expo._id, metadata: { count: result.modifiedCount, status: targetStatus } })
+  return res.json({ updated: result.modifiedCount, status: targetStatus })
+}))
+
 app.get('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
   const expoId = param(req.params.expoId)
   if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })

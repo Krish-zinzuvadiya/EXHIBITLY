@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bell, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Download, FileSpreadsheet, Globe2, LayoutDashboard, LoaderCircle, LogOut, Mail, MapPin, Menu, MoreHorizontal, Pencil, Phone, Plus, Search, Settings, ShieldCheck, Sparkles, Tags, Trash2, Upload, UserCircle2, Users, X, Zap } from 'lucide-react'
+import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bell, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Download, FileSpreadsheet, Globe2, LayoutDashboard, LoaderCircle, LogOut, Mail, MapPin, Menu, MoreHorizontal, Pencil, Phone, Plus, RotateCcw, Search, Settings, ShieldCheck, Sparkles, Tags, Trash2, Upload, UserCircle2, Users, X, Zap } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { format, isValid, parseISO } from 'date-fns'
 import { api, json } from './api'
@@ -358,9 +358,19 @@ function ExpoCard({ expo, index, onEdit }: { expo: Expo; index: number; onEdit: 
   const notifyUser = useNotify()
   const qc = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
   const del = useMutation({
     mutationFn: () => api(`/expos/${expo._id}`, { method: 'DELETE' }),
     onSuccess: () => { setConfirmDelete(false); notifyUser('Expo and its leads deleted'); void qc.invalidateQueries() },
+    onError: (e: Error) => notifyUser(e.message, 'error'),
+  })
+  const resetAll = useMutation({
+    mutationFn: () => api<{ updated: number }>(`/expos/${expo._id}/reset-status`, json('POST', { status: 'new' })),
+    onSuccess: (data) => {
+      setConfirmReset(false)
+      notifyUser(`All ${data.updated} leads in ${expo.name} set to New Inquiry`)
+      void qc.invalidateQueries()
+    },
     onError: (e: Error) => notifyUser(e.message, 'error'),
   })
   return <>
@@ -373,6 +383,7 @@ function ExpoCard({ expo, index, onEdit }: { expo: Expo; index: number; onEdit: 
         <div className="expo-card-heading">
           <button className="expo-title-button" onClick={() => navigate(`/expos/${expo._id}?tab=overview`)}><h3>{expo.name}</h3></button>
           <div className="expo-card-actions">
+            <button className="icon-button quiet reset-icon" title={`Set all leads in ${expo.name} to New Inquiry`} aria-label={`Set all leads in ${expo.name} to New Inquiry`} onClick={() => setConfirmReset(true)}><RotateCcw size={14} /></button>
             <button className="icon-button quiet" title={`Edit ${expo.name}`} aria-label={`Edit ${expo.name}`} onClick={onEdit}><Pencil size={15} /></button>
             <button className="icon-button quiet delete-icon" title={`Delete ${expo.name}`} aria-label={`Delete ${expo.name}`} onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button>
           </div>
@@ -382,6 +393,7 @@ function ExpoCard({ expo, index, onEdit }: { expo: Expo; index: number; onEdit: 
       </div>
     </article>
     {confirmDelete && <ConfirmModal title="Delete this expo?" text={`This will permanently remove ${expo.name} and all of its leads.`} confirm="Delete expo" onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate()} busy={del.isPending} />}
+    {confirmReset && <ConfirmModal title="Set all to New Inquiry?" text={`Are you sure you want to change the follow-up status of all ${expo.leadCount ?? 0} leads in “${expo.name}” to “New Inquiry”?`} confirm="Yes, set all to New Inquiry" onCancel={() => setConfirmReset(false)} onConfirm={() => resetAll.mutate()} busy={resetAll.isPending} />}
   </>
 }
 function ExpoWorkspace() {
@@ -394,16 +406,27 @@ function ExpoWorkspace() {
   const [leadModal, setLeadModal] = useState(false)
   const [upload, setUpload] = useState(false)
   const [exportModal, setExportModal] = useState(false)
+  const [resetConfirm, setResetConfirm] = useState(false)
   const qc = useQueryClient(); const notifyUser = useNotify(); const navigate = useNavigate()
   const del = useMutation({ mutationFn: () => api(`/expos/${expoId}`, { method: 'DELETE' }), onSuccess: () => { notifyUser('Expo deleted'); void qc.invalidateQueries(); navigate('/expos') }, onError: (e: Error) => notifyUser(e.message, 'error') })
+  const resetAll = useMutation({
+    mutationFn: () => api<{ updated: number }>(`/expos/${expoId}/reset-status`, json('POST', { status: 'new' })),
+    onSuccess: (data) => {
+      notifyUser(`All ${data.updated} leads set to New Inquiry`)
+      setResetConfirm(false)
+      void qc.invalidateQueries()
+    },
+    onError: (e: Error) => notifyUser(e.message, 'error'),
+  })
   const expo = query.data
   if (query.isLoading) return <div className="page-content"><LoadingRows /></div>
   if (query.isError || !expo) return <div className="page-content"><ErrorPanel message="This expo could not be found." /><Link to="/expos" className="text-link"><ArrowLeft size={16} />Back to expos</Link></div>
-  return <div className="page-content expo-workspace"><button className="back-link" onClick={() => navigate('/expos')}><ArrowLeft size={16} />All expos</button><div className="expo-workspace-head"><div className="expo-workspace-art"><ExpoLogo website={expo.website} name={expo.name} variant="workspace" /></div><div className="expo-workspace-copy"><div className="title-with-menu"><div><span className="eyebrow">YOUR EVENT</span><h1>{expo.name}</h1></div><button className="icon-button" title="Expo actions" onClick={() => setExpoModal(true)}><MoreHorizontal size={20} /></button></div><div className="expo-meta-line">{expo.startDate && <span><CalendarDays size={15} />{safeDate(expo.startDate)}{expo.endDate ? ` – ${safeDate(expo.endDate)}` : ''}</span>}{(expo.venue || expo.city) && <span><MapPin size={15} />{[expo.venue, expo.city].filter(Boolean).join(', ')}</span>}</div><div className="expo-actions"><button className="button primary small" onClick={() => setLeadModal(true)}><Plus size={15} />Add lead</button><button className="button secondary small" onClick={() => setUpload(true)}><Upload size={15} />Import Excel</button><button className="button secondary small" onClick={() => setExportModal(true)}><Download size={15} />Export</button></div></div></div>
+  return <div className="page-content expo-workspace"><button className="back-link" onClick={() => navigate('/expos')}><ArrowLeft size={16} />All expos</button><div className="expo-workspace-head"><div className="expo-workspace-art"><ExpoLogo website={expo.website} name={expo.name} variant="workspace" /></div><div className="expo-workspace-copy"><div className="title-with-menu"><div><span className="eyebrow">YOUR EVENT</span><h1>{expo.name}</h1></div><button className="icon-button" title="Expo actions" onClick={() => setExpoModal(true)}><MoreHorizontal size={20} /></button></div><div className="expo-meta-line">{expo.startDate && <span><CalendarDays size={15} />{safeDate(expo.startDate)}{expo.endDate ? ` – ${safeDate(expo.endDate)}` : ''}</span>}{(expo.venue || expo.city) && <span><MapPin size={15} />{[expo.venue, expo.city].filter(Boolean).join(', ')}</span>}</div><div className="expo-actions"><button className="button primary small" onClick={() => setLeadModal(true)}><Plus size={15} />Add lead</button><button className="button secondary small" onClick={() => setUpload(true)}><Upload size={15} />Import Excel</button><button className="button secondary small" onClick={() => setExportModal(true)}><Download size={15} />Export</button><button className="button secondary small reset-status-btn" title="Set all leads in this event to New Inquiry" onClick={() => setResetConfirm(true)}><RotateCcw size={14} />Set all to New Inquiry</button></div></div></div>
     <div className="workspace-stats">{[{ label: 'Total leads', value: expo.leadCount ?? 0, tone: 'blue', icon: Users }, { label: 'Interested', value: expo.interested ?? 0, tone: 'green', icon: Zap }, { label: 'Other statuses', value: Math.max(0, (expo.leadCount ?? 0) - (expo.interested ?? 0)), tone: 'orange', icon: Tags }].map((item) => <div key={item.label}><span className={`stat-icon ${item.tone}`}><item.icon size={17} /></span><span><strong>{item.value}</strong><small>{item.label}</small></span></div>)}</div>
     <div className="tabs-line">{[['overview', 'Overview'], ['leads', 'Leads'], ['analytics', 'Analytics'], ['details', 'Details']].map(([key, label]) => <button key={key} className={tab === key ? 'tab-button active' : 'tab-button'} onClick={() => setTab(key)}>{label}{key === 'leads' && <span>{expo.leadCount ?? 0}</span>}</button>)}</div>
-    {tab === 'leads' ? <ExpoLeads expo={expo} onAdd={() => setLeadModal(true)} onImport={() => setUpload(true)} onExport={() => setExportModal(true)} /> : tab === 'analytics' ? <AnalyticsPanel expoId={expoId} /> : tab === 'details' ? <ExpoDetails expo={expo} onEdit={() => setExpoModal(true)} onDelete={() => { if (window.confirm(`Delete “${expo.name}” and all its leads? This cannot be undone.`)) del.mutate() }} /> : <ExpoOverview expo={expo} onTab={setTab} onAdd={() => setLeadModal(true)} />}
+    {tab === 'leads' ? <ExpoLeads expo={expo} onAdd={() => setLeadModal(true)} onImport={() => setUpload(true)} onExport={() => setExportModal(true)} onResetAll={() => setResetConfirm(true)} /> : tab === 'analytics' ? <AnalyticsPanel expoId={expoId} /> : tab === 'details' ? <ExpoDetails expo={expo} onEdit={() => setExpoModal(true)} onDelete={() => { if (window.confirm(`Delete “${expo.name}” and all its leads? This cannot be undone.`)) del.mutate() }} /> : <ExpoOverview expo={expo} onTab={setTab} onAdd={() => setLeadModal(true)} />}
     {expoModal && <ExpoForm initial={expo} onClose={() => setExpoModal(false)} />}{leadModal && <LeadForm expoId={expoId} onClose={() => setLeadModal(false)} />}{upload && <ImportModal expoId={expoId} expoName={expo.name} onClose={() => setUpload(false)} />}{exportModal && <ExportModal expoId={expoId} expoName={expo.name} onClose={() => setExportModal(false)} />}
+    {resetConfirm && <ConfirmModal title="Set all to New Inquiry?" text={`Are you sure you want to change the follow-up status of all ${expo.leadCount ?? 0} leads in “${expo.name}” to “New Inquiry”?`} confirm="Yes, set all to New Inquiry" onCancel={() => setResetConfirm(false)} onConfirm={() => resetAll.mutate()} busy={resetAll.isPending} />}
   </div>
 }
 
@@ -415,7 +438,7 @@ function ExpoOverview({ expo, onTab, onAdd }: { expo: Expo; onTab: (tab: string)
 
 function ExpoDetails({ expo, onEdit, onDelete }: { expo: Expo; onEdit: () => void; onDelete: () => void }) { return <div className="detail-layout"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">EVENT INFORMATION</span><h2>Expo details</h2></div><button className="button secondary small" onClick={onEdit}><Pencil size={15} />Edit</button></div><div className="detail-grid">{[['Start date', safeDate(expo.startDate)], ['End date', safeDate(expo.endDate)], ['Venue', expo.venue || 'Not added'], ['City', expo.city || 'Not added'], ['Organizer', expo.organizer || 'Not added'], ['Website', expo.website || 'Not added']].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="detail-description"><span>Description and notes</span><p>{expo.description || expo.notes || 'No notes added for this event.'}</p></div><div className="danger-zone"><div><strong>Delete this expo</strong><p>This permanently deletes the expo and all of its leads.</p></div><button className="button danger small" onClick={onDelete}><Trash2 size={15} />Delete expo</button></div></section></div> }
 
-function ExpoLeads({ expo, onAdd, onImport, onExport }: { expo: Expo; onAdd: () => void; onImport: () => void; onExport: () => void }) {
+function ExpoLeads({ expo, onAdd, onImport, onExport, onResetAll }: { expo: Expo; onAdd: () => void; onImport: () => void; onExport: () => void; onResetAll?: () => void }) {
   const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [category, setCategory] = useState(''); const [city, setCity] = useState(''); const [source, setSource] = useState(''); const [page, setPage] = useState(1); const [sort, setSort] = useState('newest'); const [selected, setSelected] = useState<string[]>([])
   const params = queryString({ search, status, category, city, source, page, pageSize: 20, sort })
   const leads = useQuery({ queryKey: ['leads', expo._id, params], queryFn: () => api<Page<Lead>>(`/expos/${expo._id}/leads?${params}`) })
@@ -424,7 +447,7 @@ function ExpoLeads({ expo, onAdd, onImport, onExport }: { expo: Expo; onAdd: () 
   const qc = useQueryClient(); const notifyUser = useNotify()
   const bulk = useMutation({ mutationFn: (next: Status) => api<{ updated: number }>('/leads/bulk-status', json('POST', { ids: selected, status: next })), onSuccess: (result) => { notifyUser(`${result.updated} leads updated`); setSelected([]); void qc.invalidateQueries() }, onError: (e: Error) => notifyUser(e.message, 'error') })
   const selectAll = () => setSelected(selected.length === (leads.data?.items.length || 0) ? [] : (leads.data?.items || []).map((lead) => lead._id))
-  return <div className="leads-workspace"><div className="lead-tools"><label className="search-box lead-search"><Search size={17} /><input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} placeholder="Search names, companies, phone, email…" /></label><button className="button primary small" onClick={onAdd}><Plus size={16} />Add lead</button><button className="button secondary small" onClick={onImport}><Upload size={15} /><span className="hide-small">Import</span></button><button className="button secondary small" onClick={onExport}><Download size={15} /><span className="hide-small">Export</span></button></div>
+  return <div className="leads-workspace"><div className="lead-tools"><label className="search-box lead-search"><Search size={17} /><input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} placeholder="Search names, companies, phone, email…" /></label><button className="button primary small" onClick={onAdd}><Plus size={16} />Add lead</button><button className="button secondary small" onClick={onImport}><Upload size={15} /><span className="hide-small">Import</span></button><button className="button secondary small" onClick={onExport}><Download size={15} /><span className="hide-small">Export</span></button>{onResetAll && <button className="button secondary small reset-status-btn" title="Set all leads in this event to New Inquiry" onClick={onResetAll}><RotateCcw size={14} /><span className="hide-small">Set all to New</span></button>}</div>
     <div className="lead-filter-row"><div className="status-filters"><button className={status === '' ? 'status-filter selected' : 'status-filter'} onClick={() => { setStatus(''); setPage(1) }}>All leads <span>{expo.leadCount ?? 0}</span></button>{statuses.map((item) => <button key={item.value} className={`status-filter ${item.value} ${status === item.value ? 'selected' : ''}`} onClick={() => { setStatus(status === item.value ? '' : item.value); setPage(1) }}>{item.label}</button>)}</div><div className="filter-selects"><select value={category} onChange={(e) => { setCategory(e.target.value); setPage(1) }} aria-label="Filter category"><option value="">All categories</option>{unique('businessCategory').map((value) => <option key={value}>{value}</option>)}</select><select value={city} onChange={(e) => { setCity(e.target.value); setPage(1) }} aria-label="Filter city"><option value="">All cities</option>{unique('city').map((value) => <option key={value}>{value}</option>)}</select><select value={source} onChange={(e) => { setSource(e.target.value); setPage(1) }} aria-label="Filter source"><option value="">All sources</option>{unique('source').map((value) => <option key={value}>{value}</option>)}</select><select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1) }} aria-label="Sort leads"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option></select></div></div>
     {selected.length > 0 && <div className="bulk-bar"><span><CheckCircle2 size={16} />{selected.length} selected</span><select defaultValue="" onChange={(e) => { if (e.target.value) bulk.mutate(e.target.value as Status) }}><option value="" disabled>Change status…</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button className="text-link" onClick={() => void exportLeads(expo._id, expo.name, undefined, selected, notifyUser)}>Export selected</button><button className="icon-button quiet" onClick={() => setSelected([])} aria-label="Clear selection"><X size={17} /></button></div>}
     <div className="lead-list-head"><label className="select-all"><input type="checkbox" checked={Boolean(leads.data?.items.length && selected.length === leads.data.items.length)} onChange={selectAll} />Lead contact</label><span>STATUS</span><span>VISIT DATE</span><span /></div>
