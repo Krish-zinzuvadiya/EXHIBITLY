@@ -22,6 +22,15 @@ type AuthedRequest = Request & { userId?: string }
 
 app.set('trust proxy', 1)
 app.use(helmet({ contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'data:', 'https://www.google.com', 'https://*.googleusercontent.com'] } } }))
+app.use((req, res, next) => {
+  const url = (req.originalUrl || req.url || '').toLowerCase()
+  if (url.includes('/.git') || url.includes('/.env') || url.includes('/.vscode')) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+    return res.status(403).send('403 Forbidden: Access Denied.')
+  }
+  next()
+})
 app.use(express.json({ limit: '2mb' }))
 app.use(cookieParser())
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }))
@@ -49,6 +58,11 @@ const recordActivity = (userId: string, description: string, fields: { action: s
 const getOwnedExpo = (expoId: string, userId: string) => Expo.findOne({ _id: expoId, userId })
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 }))
+app.all('/api/denied', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+  return res.status(403).send('403 Forbidden: Access Denied.')
+})
 
 app.get('/api/auth/registration-open', (_req, res) => res.json({ open: true }))
 app.get('/api/auth/google/start', (req, res) => {
@@ -254,7 +268,7 @@ app.get('/api/expos', auth, asyncRoute(async (req, res) => {
 }))
 app.post('/api/expos', auth, asyncRoute(async (req, res) => {
   const parsed = expoSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'Expo name is required.' })
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || 'Expo name is required.' })
   const expo = await Expo.create({ ...parsed.data, ...userOnly(req) })
   await recordActivity(req.userId!, `Created ${expo.name}`, { action: 'expo.created', expoId: expo._id })
   return res.status(201).json(expo)
@@ -268,7 +282,7 @@ app.get('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
 app.put('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.expoId))) return res.status(400).json({ message: 'Invalid expo.' })
   const parsed = expoSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'Expo name is required.' })
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || 'Expo name is required.' })
   const expo = await Expo.findOneAndUpdate({ _id: param(req.params.expoId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true })
   if (!expo) return res.status(404).json({ message: 'Expo not found.' })
   await recordActivity(req.userId!, `Updated ${expo.name}`, { action: 'expo.updated', expoId: expo._id })
@@ -316,7 +330,10 @@ app.post('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
   const expo = await getOwnedExpo(expoId, req.userId!)
   if (!expo) return res.status(404).json({ message: 'Expo not found.' })
   const parsed = leadSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || 'Add a company name or contact person, then check the details and try again.'
+    return res.status(400).json({ message })
+  }
   const lead = await Lead.create({ ...parsed.data, ...userOnly(req), expoId: expo._id, source: parsed.data.source || 'Manual entry' })
   await recordActivity(req.userId!, `Added ${lead.personName || lead.companyName || 'a lead'} to ${expo.name}`, { action: 'lead.created', expoId: expo._id, leadId: lead._id })
   return res.status(201).json(sanitizeLead(lead.toObject()))
@@ -334,7 +351,10 @@ app.get('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
 app.put('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
   if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
   const parsed = leadSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ message: 'Add a company name or contact person, then check the details and try again.' })
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || 'Add a company name or contact person, then check the details and try again.'
+    return res.status(400).json({ message })
+  }
   const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true }).lean()
   if (!lead) return res.status(404).json({ message: 'Lead not found.' })
   await recordActivity(req.userId!, `Updated ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.updated', expoId: lead.expoId, leadId: lead._id })
@@ -524,7 +544,34 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   return res.status(500).json({ message: 'Something went wrong. Please try again.' })
 })
 
-const expoSchema = z.object({ name: z.string().trim().min(1).max(160), startDate: z.coerce.date().optional().or(z.literal('')), endDate: z.coerce.date().optional().or(z.literal('')), venue: z.string().max(180).optional(), city: z.string().max(120).optional(), organizer: z.string().max(180).optional(), website: z.string().max(300).optional(), description: z.string().max(2000).optional(), notes: z.string().max(5000).optional() }).transform((data) => ({ ...data, startDate: data.startDate || undefined, endDate: data.endDate || undefined }))
+const optionalDate = z.preprocess((val) => {
+  if (!val || val === '' || val === null || val === undefined) return undefined
+  const d = new Date(val as string | number | Date)
+  return Number.isNaN(d.getTime()) ? undefined : d
+}, z.date().optional())
+
+const optionalStringArray = z.preprocess((val) => {
+  if (!val || val === '' || val === null || val === undefined) return []
+  if (Array.isArray(val)) return val.map((item) => String(item).trim()).filter(Boolean)
+  if (typeof val === 'string') return val.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean)
+  return []
+}, z.array(z.string().max(254)).optional().default([]))
+
+const expoSchema = z.object({
+  name: z.string().trim().min(1, 'Expo name is required.').max(160),
+  startDate: optionalDate,
+  endDate: optionalDate,
+  venue: z.string().max(180).optional(),
+  city: z.string().max(120).optional(),
+  organizer: z.string().max(180).optional(),
+  website: z.string().max(300).optional(),
+  description: z.string().max(2000).optional(),
+  notes: z.string().max(5000).optional(),
+}).transform((data) => ({
+  ...data,
+  startDate: data.startDate || undefined,
+  endDate: data.endDate || undefined,
+}))
 function extractEmails(val: unknown): string[] {
   if (!val) return []
   if (Array.isArray(val)) return [...new Set(val.flatMap(extractEmails))]
@@ -534,13 +581,13 @@ function extractEmails(val: unknown): string[] {
   if (matches && matches.length > 0) {
     return [...new Set(matches.map((e) => e.trim().toLowerCase()))]
   }
-  const parts = text.split(/[,;|\/\n\s]+/).map((s) => s.replace(/^[<(\[]+|[>)\].,;]+$/g, '').trim().toLowerCase()).filter(Boolean)
+  const parts = text.split(/[,;|/\n\s]+/).map((s) => s.replace(/^[<([\]+|[>)\].,;]+$/g, '').trim().toLowerCase()).filter(Boolean)
   return [...new Set(parts.filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)))]
 }
 
 function toWhatsAppNumber(val?: string | null): string {
   if (!val) return ''
-  let digits = String(val).replace(/\D/g, '')
+  const digits = String(val).replace(/\D/g, '')
   if (!digits) return ''
   if (digits.length === 10) return `91${digits}`
   if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`
@@ -557,11 +604,11 @@ function cleanDisplayPhone(val?: string | null): string {
   return trimmed.replace(/^\+91[\s-]*/, '')
 }
 
-function sanitizeLead<T extends Record<string, any>>(lead: T): T {
+function sanitizeLead<T extends Record<string, unknown>>(lead: T): T {
   if (!lead) return lead
-  const primaryPhone = cleanDisplayPhone(lead.primaryPhone)
-  const otherPhones = Array.isArray(lead.otherPhones) ? lead.otherPhones.map(cleanDisplayPhone) : []
-  const whatsappPhone = toWhatsAppNumber(lead.primaryPhone)
+  const primaryPhone = cleanDisplayPhone(lead.primaryPhone as string | undefined)
+  const otherPhones = Array.isArray(lead.otherPhones) ? (lead.otherPhones as string[]).map(cleanDisplayPhone) : []
+  const whatsappPhone = toWhatsAppNumber(lead.primaryPhone as string | undefined)
   const whatsappUrl = whatsappPhone ? `https://wa.me/${whatsappPhone}` : ''
   return {
     ...lead,
@@ -577,7 +624,7 @@ function extractPhones(val: unknown): string[] {
   if (Array.isArray(val)) return [...new Set(val.flatMap(extractPhones))]
   const text = String(val).trim()
   if (!text) return []
-  const parts = text.split(/[,;|\/\n]+/).map((s) => cleanDisplayPhone(s.trim())).filter(Boolean)
+  const parts = text.split(/[,;|/\n]+/).map((s) => cleanDisplayPhone(s.trim())).filter(Boolean)
   return [...new Set(parts.filter((s) => s.replace(/\D/g, '').length >= 5))]
 }
 
@@ -585,25 +632,19 @@ const leadSchema = z.object({
   personName: z.string().trim().max(160).optional(),
   contactPerson: z.string().trim().max(160).optional(),
   name: z.string().trim().max(160).optional(),
-  visitDate: z.coerce.date().optional().or(z.literal('')),
+  visitDate: optionalDate,
   companyName: z.string().trim().max(180).optional(),
   designation: z.string().max(160).optional(),
-  primaryPhone: z.string().max(200).optional(),
-  mobile: z.string().max(200).optional(),
-  phone: z.string().max(200).optional(),
-  otherPhones: z.array(z.string().max(200)).max(50).optional(),
-  email: z.string().max(2000).optional(),
-  otherEmails: z.array(z.string().max(254)).max(50).optional(),
+  primaryPhone: z.string().max(200).optional().default(''),
+  mobile: z.string().max(200).optional().default(''),
+  phone: z.string().max(200).optional().default(''),
+  otherPhones: optionalStringArray,
+  email: z.string().max(2000).optional().default(''),
+  otherEmails: optionalStringArray,
   website: z.string().max(300).optional(),
   socialPlatform: z.string().max(80).optional(),
   socialProfile: z.string().max(300).optional(),
-  socialMedia: z.object({
-    linkedin: z.string().max(300).optional(),
-    instagram: z.string().max(300).optional(),
-    facebook: z.string().max(300).optional(),
-    youtube: z.string().max(300).optional(),
-    other: z.string().max(300).optional(),
-  }).optional(),
+  socialMedia: z.record(z.string(), z.string().max(300).optional()).optional(),
   businessCategory: z.string().max(120).optional(),
   address: z.string().max(500).optional(),
   city: z.string().max(120).optional(),
@@ -613,16 +654,18 @@ const leadSchema = z.object({
   notes: z.string().max(5000).optional(),
   source: z.string().max(120).optional(),
 }).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim()), {
-  message: 'A company name or contact person is required.',
+  message: 'Add a company name or contact person, then check the details and try again.',
 }).transform((data) => {
   const personName = data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim() || ''
-  const emails = extractEmails([data.email, ...(data.otherEmails || [])])
+  const rawEmails: unknown[] = [data.email, data.otherEmails]
+  const emails = extractEmails(rawEmails)
   const primaryEmail = emails[0] || (data.email && !data.email.includes('@') ? '' : (data.email?.trim() || ''))
-  const otherEmails = emails.length > 1 ? emails.slice(1) : (data.otherEmails || []).filter(Boolean)
+  const otherEmails = emails.length > 1 ? emails.slice(1) : (Array.isArray(data.otherEmails) ? data.otherEmails : extractEmails(data.otherEmails))
 
-  const phones = extractPhones([data.primaryPhone, data.mobile, data.phone, ...(data.otherPhones || [])])
+  const rawPhones: unknown[] = [data.primaryPhone, data.mobile, data.phone, data.otherPhones]
+  const phones = extractPhones(rawPhones)
   const primaryPhone = cleanDisplayPhone(phones[0] || (data.primaryPhone?.trim() || data.mobile?.trim() || data.phone?.trim() || ''))
-  const otherPhones = (phones.length > 1 ? phones.slice(1) : (data.otherPhones || []).filter(Boolean)).map(cleanDisplayPhone)
+  const otherPhones = (phones.length > 1 ? phones.slice(1) : (Array.isArray(data.otherPhones) ? data.otherPhones : extractPhones(data.otherPhones))).map(cleanDisplayPhone)
 
   return {
     ...data,

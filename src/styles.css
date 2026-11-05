@@ -312,14 +312,716 @@
 
 /* Mobile responsive rules (max-width: 640px) */
 @media (max-width: 640px) {
-  body, #root, .app-frame, .main-shell {
+  html, body {
     overflow-x: hidden !important;
     max-width: 100vw !important;
+    position: relative !important;
   }
-  .page-area {
-    padding: 16px 14px 115px !important;
+  #root {
+    overflow-x: clip !important;
     max-width: 100% !important;
   }
+  .app-frame, .main-shell {
+    overflow-x: clip !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    min-width: 0 !important;
+  }
+
+  /* Safe Area Sticky Topbar */
+  .topbar {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 45 !important;
+    height: calc(54px + max(8px, env(safe-area-inset-top, 0px))) !important;
+    padding-top: max(8px, env(safe-area-inset-top, 0px)) !important;
+    padding-left: 12px !important;
+    padding-right: 14px !important;
+    background: rgba(249, 248, 245, 0.95) !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+    border-bottom: 1px solid #eeeae4 !important;
+  }
+  .mobile-menu-button {
+    display: inline-grid !important;
+    width: 34px !important;
+    height: 34px !important;
+    margin-right: 6px !important;
+  }
+  .breadcrumbs {
+    font-size: 11.5px !important;
+    gap: 4px !important;
+  }
+  .breadcrumbs span, .breadcrumbs svg {
+    display: none !important;
+  }
+  .breadcrumbs strong {
+    font-size: 13.5px !important;
+  }
+  .topbar-actions {
+    gap: 8px !important;
+  }
+  .help-button {
+    display: none !important;
+  }
+  .notification-button {
+    width: 32px !important;
+    height: 32px !important;
+  }
+  .avatar-top {
+    width: 31px !important;
+    height: 31px !important;
+  }
+
+  /* Safe Area Fixed Bottom Navigation */
+  .bottom-nav {
+    position: fixed !important;
+    z-index: 50 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: calc(58px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 4px 6px max(6px, env(safe-area-inset-bottom, 0px)) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-around !important;
+    background: rgba(255, 255, 255, 0.96) !important;
+    border-top: 1px solid #eeebe5 !important;
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+  }
+  .bottom-item {
+    width: 25% !important;
+    height: 48px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 3px !important;
+    color: #9a958d !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+  }
+  .bottom-item.active {
+    color: var(--accent-ink, #ec682c) !important;
+    font-weight: 700 !important;
+  }
+  .bottom-item svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  /* Page Area & Containers */
+  .page-area {
+    padding: 14px 12px calc(76px + env(safe-area-inset-bottom, 0px)) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .page-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .welcome-row, .page-title-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    margin: 4px 0 16px !important;
+  }
+  .welcome-row h1, .page-title-row h1 {
+    font-size: 22px !important;
+    letter-spacing: -0.6px !important;
+    margin-top: 4px !important;
+  }
+  .welcome-row p, .page-title-row p {
+    font-size: 11.5px !important;
+    line-height: 1.5 !important;
+  }
+  .welcome-row > .button, .page-title-row > .button {
+    height: 36px !important;
+    font-size: 11.5px !important;
+    padding: 0 12px !important;
+  }
+
+  /* Dashboard Stat Grid (6 cards in 2 columns) */
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .stat-card {
+    min-height: 106px !important;
+    padding: 12px !important;
+    border-radius: 12px !important;
+  }
+  .stat-icon {
+    width: 30px !important;
+    height: 30px !important;
+    border-radius: 8px !important;
+  }
+  .stat-heading {
+    left: 48px !important;
+    top: 15px !important;
+    font-size: 9.5px !important;
+  }
+  .stat-heading svg {
+    display: none !important;
+  }
+  .stat-value {
+    font-size: 22px !important;
+    margin-top: 8px !important;
+  }
+  .stat-detail {
+    font-size: 9.5px !important;
+    margin-top: 5px !important;
+  }
+
+  /* Dashboard Insights Hub & Direct Outreach (Screenshot 1 fix) */
+  .dashboard-insights-hub {
+    margin-top: 16px !important;
+    gap: 12px !important;
+    width: 100% !important;
+  }
+  .insights-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 4px !important;
+  }
+  .insights-header h2 {
+    font-size: 17px !important;
+  }
+  .insights-header p {
+    font-size: 11.5px !important;
+  }
+  .insights-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100% !important;
+  }
+  .insights-leads-panel, .insights-stats-panel {
+    padding: 14px 12px !important;
+    border-radius: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .quick-outreach-list {
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .outreach-item {
+    display: grid !important;
+    grid-template-columns: 36px minmax(0, 1fr) auto !important;
+    grid-template-rows: auto auto !important;
+    align-items: center !important;
+    gap: 6px 10px !important;
+    padding: 10px !important;
+    border-radius: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .outreach-avatar {
+    grid-column: 1 !important;
+    grid-row: 1 / 3 !important;
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 12px !important;
+  }
+  .outreach-info {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+  .outreach-info strong {
+    font-size: 13.5px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+  .outreach-info span {
+    font-size: 11px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+  .outreach-item .status-pill {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    justify-self: start !important;
+    height: 24px !important;
+    font-size: 10.5px !important;
+    padding: 0 8px !important;
+  }
+  .outreach-actions {
+    grid-column: 3 !important;
+    grid-row: 1 / 3 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 5px !important;
+    justify-self: end !important;
+  }
+  .icon-action-btn {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 9px !important;
+  }
+  .velocity-legend {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px 10px !important;
+    font-size: 11px !important;
+    margin-top: 10px !important;
+  }
+  .expo-pro-tip-box {
+    padding: 12px !important;
+    margin-top: 14px !important;
+  }
+  .expo-pro-tip-box p {
+    font-size: 11.5px !important;
+  }
+
+  /* Expo Workspace Head & Header Actions (Screenshot 3 fix) */
+  .back-link {
+    font-size: 11.5px !important;
+    gap: 6px !important;
+    margin-bottom: 12px !important;
+  }
+  .expo-workspace-head {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100% !important;
+  }
+  .expo-workspace-art {
+    min-height: 100px !important;
+    border-radius: 12px !important;
+    position: relative !important;
+  }
+  .title-with-menu {
+    align-items: flex-start !important;
+  }
+  .title-with-menu h1 {
+    font-size: 20px !important;
+    line-height: 1.25 !important;
+    letter-spacing: -0.5px !important;
+    word-break: break-word !important;
+  }
+  .expo-meta-line {
+    flex-direction: column !important;
+    gap: 6px !important;
+    font-size: 11px !important;
+    margin-top: 8px !important;
+  }
+  .expo-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 7px !important;
+    margin-top: 14px !important;
+    width: 100% !important;
+  }
+  .expo-actions .button {
+    width: 100% !important;
+    min-height: 38px !important;
+    font-size: 11.5px !important;
+    padding: 0 10px !important;
+    justify-content: center !important;
+    border-radius: 9px !important;
+  }
+  .expo-actions .reset-status-btn {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* Workspace Stat Cards (Screenshot 3 fix - All 3 Cards fit in one row) */
+  .workspace-stats {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+    margin: 14px 0 16px !important;
+    width: 100% !important;
+  }
+  .workspace-stats > div {
+    min-width: 0 !important;
+    width: 100% !important;
+    padding: 10px 4px !important;
+    border-radius: 10px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
+    gap: 4px !important;
+    box-sizing: border-box !important;
+  }
+  .workspace-stats .stat-icon {
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 8px !important;
+  }
+  .workspace-stats strong {
+    font-size: 16px !important;
+    line-height: 1.1 !important;
+  }
+  .workspace-stats small {
+    font-size: 9.5px !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+
+  /* Workspace Tabs Line (Screenshot 3 fix - Smooth touch scrolling, no truncating) */
+  .tabs-line {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    gap: 4px !important;
+    justify-content: flex-start !important;
+    margin-bottom: 14px !important;
+    border-bottom: 1px solid #eae7e1 !important;
+    width: 100% !important;
+  }
+  .tabs-line::-webkit-scrollbar {
+    display: none !important;
+  }
+  .tab-button {
+    flex: 0 0 auto !important;
+    height: 40px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+    white-space: nowrap !important;
+  }
+  .tab-button.active::after {
+    left: 8px !important;
+    right: 8px !important;
+  }
+  .tab-button span {
+    font-size: 10.5px !important;
+    margin-left: 5px !important;
+  }
+
+  /* Overview Tab & Chart (Screenshot 2 fix - Zero horizontal blowout) */
+  .workspace-overview {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  .overview-main {
+    display: grid !important;
+    gap: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  .overview-aside {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  .workspace-overview .panel {
+    padding: 14px 12px !important;
+    border-radius: 14px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .overview-chart {
+    min-height: 220px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+  .trend-chart {
+    height: 180px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+  .trend-chart .recharts-responsive-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+  .status-summary-list {
+    gap: 11px !important;
+  }
+  .summary-status > div {
+    font-size: 11.5px !important;
+  }
+  .summary-status strong {
+    font-size: 12px !important;
+  }
+  .summary-track {
+    height: 6px !important;
+  }
+  .notes-panel p {
+    font-size: 12px !important;
+  }
+
+  /* Lead Row & List (Screenshots 2 & 3 fix - Status pill never cut off) */
+  .lead-list {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .lead-list-head {
+    display: none !important;
+  }
+  .lead-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+    grid-template-rows: auto auto !important;
+    gap: 8px 8px !important;
+    padding: 11px 10px !important;
+    min-height: auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .lead-person-cell {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .lead-avatar {
+    width: 38px !important;
+    height: 38px !important;
+    font-size: 12.5px !important;
+    flex-shrink: 0 !important;
+    margin-top: 2px !important;
+  }
+  .lead-person-copy {
+    flex: 1 !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 3px !important;
+    text-align: left !important;
+  }
+  .lead-person-copy strong {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: #1e1b18 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+  .lead-person-copy > span {
+    font-size: 11.5px !important;
+    color: #78736a !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    max-width: 100% !important;
+  }
+  .lead-contact-line {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px 8px !important;
+    margin-top: 4px !important;
+    max-width: 100% !important;
+  }
+  .contact-chip {
+    font-size: 11px !important;
+    gap: 4px !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+  .contact-chip svg {
+    width: 11px !important;
+    height: 11px !important;
+    flex-shrink: 0 !important;
+  }
+  .lead-status-cell {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    justify-self: start !important;
+    align-self: center !important;
+    padding: 0 !important;
+  }
+  .lead-status-cell .status-pill {
+    height: 26px !important;
+    font-size: 11px !important;
+    padding: 0 9px !important;
+    border-radius: 7px !important;
+  }
+  .lead-date-cell {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    align-self: center !important;
+    font-size: 10.5px !important;
+    color: #8c8780 !important;
+    white-space: nowrap !important;
+    margin: 0 !important;
+  }
+  .lead-row-actions {
+    grid-column: 3 !important;
+    grid-row: 2 !important;
+    align-self: center !important;
+    margin: 0 !important;
+  }
+  .lead-row-actions .icon-button {
+    width: 28px !important;
+    height: 28px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Compact lead list (in Latest leads overview) */
+  .lead-list.compact .lead-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-rows: auto auto !important;
+    padding: 9px 8px !important;
+    min-height: auto !important;
+  }
+  .lead-list.compact .lead-person-cell {
+    grid-column: 1 / -1 !important;
+    grid-row: 1 !important;
+  }
+  .lead-list.compact .lead-status-cell {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    display: block !important;
+    margin-top: 4px !important;
+  }
+  .lead-list.compact .lead-row-actions {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+    margin: 4px 0 0 !important;
+  }
+  .lead-list.compact .lead-date-cell {
+    display: none !important;
+  }
+
+  /* Lead Tools, Search, and Filters (ExpoLeads / LeadsPage) */
+  .lead-tools {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 7px !important;
+    width: 100% !important;
+  }
+  .lead-search {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    height: 40px !important;
+  }
+  .lead-tools > .button {
+    width: 100% !important;
+    min-height: 36px !important;
+    font-size: 11.5px !important;
+    padding: 0 8px !important;
+    justify-content: center !important;
+  }
+  .lead-tools .reset-status-btn {
+    grid-column: 1 / -1 !important;
+  }
+  .lead-filter-row {
+    flex-direction: column !important;
+    gap: 8px !important;
+    margin: 10px 0 12px !important;
+    width: 100% !important;
+  }
+  .status-filters {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    gap: 6px !important;
+    width: 100% !important;
+    padding-bottom: 2px !important;
+  }
+  .status-filter {
+    flex: 0 0 auto !important;
+    padding: 6px 11px !important;
+    font-size: 11.5px !important;
+    border-radius: 8px !important;
+  }
+  .filter-selects {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 7px !important;
+    width: 100% !important;
+  }
+  .filter-selects select {
+    width: 100% !important;
+    max-width: none !important;
+    height: 36px !important;
+    font-size: 12px !important;
+    border-radius: 8px !important;
+    padding: 0 20px 0 8px !important;
+  }
+
+  /* Dashboard Columns & Quick Actions */
+  .dashboard-columns {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    margin-top: 12px !important;
+  }
+  .recent-panel, .activity-panel {
+    padding: 14px 12px !important;
+    min-height: 0 !important;
+  }
+  .expo-row {
+    padding: 10px 0 !important;
+    gap: 10px !important;
+  }
+  .expo-cover {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 9px !important;
+  }
+  .expo-row-main strong {
+    font-size: 13px !important;
+  }
+  .expo-row-main small {
+    font-size: 10.5px !important;
+  }
+  .quick-actions {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    padding: 14px 12px !important;
+    gap: 10px !important;
+  }
+  .quick-action-list {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 7px !important;
+    width: 100% !important;
+  }
+  .quick-action-list > a, .quick-action-list > button {
+    width: 100% !important;
+    min-height: 48px !important;
+    padding: 8px 10px !important;
+  }
+  .expo-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .expo-art {
+    height: 115px !important;
+  }
+  .expo-title-button h3 {
+    font-size: 14px !important;
+  }
+
+  /* Lead Details Page */
   .lead-details-page {
     padding-bottom: 115px !important;
   }
@@ -505,25 +1207,102 @@
     font-size: 10px !important;
     margin-top: 14px !important;
   }
-  .lead-contact-line {
-    gap: 6px !important;
+
+  /* Modals & Forms on Mobile */
+  .modal-backdrop {
+    padding: 0 !important;
+    align-items: flex-end !important;
   }
-  .contact-chip {
+  .modal, .modal.wide {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 92dvh !important;
+    border-radius: 18px 18px 0 0 !important;
+  }
+  .modal-header {
+    padding: 16px 16px 12px !important;
+  }
+  .modal-header h2 {
+    font-size: 18px !important;
+  }
+  .modal-body {
+    padding: 14px 16px max(16px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+  .form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .span-two {
+    grid-column: 1 !important;
+  }
+  .form-grid label {
     font-size: 11px !important;
+    gap: 5px !important;
+  }
+  .form-grid input, .form-grid select, .form-grid textarea {
+    font-size: 15px !important;
+    min-height: 42px !important;
+    border-radius: 9px !important;
+    padding: 8px 10px !important;
+  }
+  .modal-actions {
+    flex-direction: column-reverse !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .modal-actions .button {
+    width: 100% !important;
+    min-height: 42px !important;
+    font-size: 13px !important;
+  }
+  .import-summary {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
+  }
+  .analytics-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+  .chart-panel {
+    padding: 14px 12px !important;
+  }
+  .donut-layout {
+    flex-direction: column !important;
+    height: auto !important;
+    gap: 14px !important;
+  }
+  .donut-wrap {
+    flex: 0 0 auto !important;
+    width: 180px !important;
+    height: 180px !important;
+  }
+  .legend-list {
+    width: 100% !important;
+  }
+  .customization-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .accent-options {
+    grid-template-columns: 1fr !important;
   }
 }
 
 /* Extra small phones (<= 380px, e.g. iPhone SE / 320px) */
 @media (max-width: 380px) {
   .page-area {
-    padding: 12px 10px 115px !important;
+    padding: 12px 8px calc(76px + env(safe-area-inset-bottom, 0px)) !important;
   }
-  .lead-details-page {
-    padding-bottom: 115px !important;
+  .workspace-stats > div {
+    padding: 8px 2px !important;
   }
-  .detail-card {
-    padding: 14px 10px !important;
-    border-radius: 12px !important;
+  .workspace-stats strong {
+    font-size: 14px !important;
+  }
+  .workspace-stats small {
+    font-size: 8.5px !important;
+  }
+  .lead-person-copy strong {
+    font-size: 13px !important;
   }
   .lead-detail-head .detail-avatar {
     width: 42px !important;
@@ -533,42 +1312,17 @@
   .lead-detail-head h1 {
     font-size: 18px !important;
   }
-  .lead-detail-actions {
-    gap: 6px !important;
-  }
   .lead-detail-actions .button {
     min-width: 75px !important;
     font-size: 11px !important;
     padding: 0 8px !important;
     height: 36px !important;
   }
-  .lead-detail-actions .icon-button {
-    width: 36px !important;
-    height: 36px !important;
-    flex: 0 0 36px !important;
-  }
-  .contact-row {
-    gap: 8px !important;
-    min-height: 52px !important;
-  }
-  .contact-icon {
-    width: 28px !important;
-    height: 28px !important;
-    flex: 0 0 28px !important;
-  }
-  .contact-icon svg {
-    width: 14px !important;
-    height: 14px !important;
-  }
   .contact-row strong,
   .contact-row > div > a,
   .contact-row .multi-value-viewer .primary-value,
   .contact-row .multi-value-viewer .primary-value a {
     font-size: 11.5px !important;
-  }
-  .contact-row .multi-value-badge {
-    font-size: 9.5px !important;
-    padding: 1.5px 6px !important;
   }
   .multi-value-dropdown {
     left: 8px !important;

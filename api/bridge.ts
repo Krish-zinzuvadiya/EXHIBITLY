@@ -6,6 +6,20 @@ export default async function handler(req: Request, res: Response) {
   try {
     const currentUrl = new URL(req.url || '/api/bridge', 'http://localhost')
     const route = currentUrl.searchParams.get('__route') || ''
+
+    const rawUrl = (req.url || '').toLowerCase()
+    if (
+      route === 'denied' ||
+      rawUrl.includes('/.git') ||
+      rawUrl.includes('/.env') ||
+      rawUrl.includes('/.vscode') ||
+      currentUrl.pathname.startsWith('/.git')
+    ) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+      return res.status(403).send('403 Forbidden: Access Denied.')
+    }
+
     if (!route || !/^[a-z0-9/_-]+$/i.test(route) || route.includes('..')) {
       return res.status(400).json({ message: 'Invalid API route.' })
     }
