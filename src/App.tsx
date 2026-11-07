@@ -332,7 +332,7 @@ function DashboardInsights({ stats }: { stats?: Record<string, number> }) {
 }
 
 type ActivityItem = { _id: string; description: string; action: string; createdAt: string; expoId?: { name: string } }
-function ActivityList({ items }: { items: ActivityItem[] }) { return <div className="activity-list">{items.map((item) => <div className="activity-row" key={item._id}><span className="activity-marker"><ActivityIcon size={14} /></span><div><p>{item.description}</p><small>{item.expoId?.name ? `${item.expoId.name} · ` : ''}{safeDate(item.createdAt, 'MMM d · h:mm a')}</small></div></div>)}</div> }
+function ActivityList({ items }: { items: ActivityItem[] }) { return <div className="activity-list">{items.map((item) => <div className="activity-row" key={item._id}><span className="activity-marker"><ActivityIcon size={14} /></span><div className="activity-row-main"><p>{item.description}</p><small>{item.expoId?.name ? `${item.expoId.name} · ` : ''}{safeDate(item.createdAt, 'MMM d · h:mm a')}</small></div></div>)}</div> }
 function ExpoLogo({ website, name, variant = 'card' }: { website?: string; name: string; variant?: 'compact' | 'card' | 'workspace' }) {
   const source = expoLogoUrl(website)
   const [failedSource, setFailedSource] = useState('')
