@@ -1,0 +1,779 @@
+import express, { type NextFunction, type Request, type Response } from 'express'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import mongoose, { Types } from 'mongoose'
+import helmet from 'helmet'
+import cookieParser from 'cookie-parser'
+import rateLimit from 'express-rate-limit'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
+import multer from 'multer'
+import XLSX from 'xlsx'
+import { z } from 'zod'
+import { Activity, Expo, Lead, User } from './models.js'
+
+const app = express()
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'
+if (isProduction && !process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured in production.')
+if (isProduction && !process.env.MONGODB_URI) throw new Error('MONGODB_URI must be configured in production.')
+const jwtSecret = process.env.JWT_SECRET || 'local-development-secret-change-before-deploying'
+const statuses = ['new', 'interested', 'called', 'not-interested', 'good-presence'] as const
+type LeadStatus = typeof statuses[number]
+type AuthedRequest = Request & { userId?: string }
+
+app.set('trust proxy', 1)
+app.use(helmet({ contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'data:', 'https://www.google.com', 'https://*.googleusercontent.com'] } } }))
+app.use((req, res, next) => {
+  const url = (req.originalUrl || req.url || '').toLowerCase()
+  if (url.includes('/.git') || url.includes('/.env') || url.includes('/.vscode')) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+    return res.status(403).send('403 Forbidden: Access Denied.')
+  }
+  next()
+})
+app.use(express.json({ limit: '2mb' }))
+app.use(cookieParser())
+app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false }))
+
+const objectId = (value: unknown) => typeof value === 'string' && Types.ObjectId.isValid(value)
+const param = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] || '' : value || ''
+const auth = (req: AuthedRequest, res: Response, next: NextFunction) => {
+  const token = req.cookies?.expo_session as string | undefined
+  if (!token) return res.status(401).json({ message: 'Please sign in to continue.' })
+  try {
+    const claims = jwt.verify(token, jwtSecret) as jwt.JwtPayload
+    req.userId = String(claims.sub)
+    next()
+  } catch { return res.status(401).json({ message: 'Your session has expired. Please sign in again.' }) }
+}
+const userOnly = (req: AuthedRequest) => ({ userId: req.userId })
+const isStatus = (value: unknown): value is LeadStatus => statuses.includes(value as LeadStatus)
+const cookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: isProduction, path: '/' }
+const issueSession = (res: Response, userId: string) => res.cookie('expo_session', jwt.sign({}, jwtSecret, { subject: userId, expiresIn: '7d' }), { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 })
+const oauthCookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: isProduction, path: '/api/auth/google/callback' }
+const googleRedirectUri = (req: Request) => process.env.GOOGLE_REDIRECT_URI?.trim() || `${req.protocol}://${req.get('host')}/api/auth/google/callback`
+const redirectGoogleError = (res: Response, code: string) => res.redirect(`/?authError=${encodeURIComponent(code)}`)
+const asyncRoute = (fn: (req: AuthedRequest, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => Promise.resolve(fn(req as AuthedRequest, res)).catch(next)
+const recordActivity = (userId: string, description: string, fields: { action: string; expoId?: Types.ObjectId | string; leadId?: Types.ObjectId | string; metadata?: object }) => Activity.create({ userId, description, ...fields })
+const getOwnedExpo = (expoId: string, userId: string) => Expo.findOne({ _id: expoId, userId })
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, database: mongoose.connection.readyState === 1 }))
+app.all('/api/denied', (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+  return res.status(403).send('403 Forbidden: Access Denied.')
+})
+
+app.get('/api/auth/registration-open', (_req, res) => res.json({ open: true }))
+app.get('/api/auth/google/start', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
+  if (!clientId || !clientSecret) return redirectGoogleError(res, 'google_not_configured')
+  let linkUserId: string | undefined
+  if (req.query.link === '1') {
+    const sessionToken = req.cookies?.expo_session as string | undefined
+    try {
+      const claims = sessionToken ? jwt.verify(sessionToken, jwtSecret) as jwt.JwtPayload : null
+      if (typeof claims?.sub !== 'string') return redirectGoogleError(res, 'google_link_signin_required')
+      linkUserId = claims.sub
+    } catch { return redirectGoogleError(res, 'google_link_signin_required') }
+    res.cookie('google_oauth_link_user', linkUserId, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+  } else {
+    res.clearCookie('google_oauth_link_user', oauthCookieOptions)
+  }
+
+  const state = randomBytes(32).toString('base64url')
+  const codeVerifier = randomBytes(48).toString('base64url')
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url')
+  res.cookie('google_oauth_state', state, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+  res.cookie('google_oauth_verifier', codeVerifier, { ...oauthCookieOptions, maxAge: 10 * 60 * 1000 })
+
+  const authorizationUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+  authorizationUrl.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: googleRedirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+    prompt: 'select_account',
+  }).toString()
+  return res.redirect(authorizationUrl.toString())
+})
+
+app.get('/api/auth/google/callback', asyncRoute(async (req, res) => {
+  const state = typeof req.query.state === 'string' ? req.query.state : ''
+  const savedState = req.cookies?.google_oauth_state as string | undefined
+  const codeVerifier = req.cookies?.google_oauth_verifier as string | undefined
+  const linkUserId = req.cookies?.google_oauth_link_user as string | undefined
+  res.clearCookie('google_oauth_state', oauthCookieOptions)
+  res.clearCookie('google_oauth_verifier', oauthCookieOptions)
+  res.clearCookie('google_oauth_link_user', oauthCookieOptions)
+
+  const stateBuffer = Buffer.from(state)
+  const savedStateBuffer = Buffer.from(savedState || '')
+  if (!state || !savedState || stateBuffer.length !== savedStateBuffer.length || !timingSafeEqual(stateBuffer, savedStateBuffer)) {
+    return redirectGoogleError(res, 'google_state_invalid')
+  }
+  if (req.query.error) return redirectGoogleError(res, 'google_cancelled')
+  const code = typeof req.query.code === 'string' ? req.query.code : ''
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim()
+  if (!code || !codeVerifier || !clientId || !clientSecret) return redirectGoogleError(res, 'google_failed')
+
+  try {
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        code_verifier: codeVerifier,
+        grant_type: 'authorization_code',
+        redirect_uri: googleRedirectUri(req),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!tokenResponse.ok) return redirectGoogleError(res, 'google_failed')
+    const tokens = await tokenResponse.json() as { access_token?: string }
+    if (!tokens.access_token) return redirectGoogleError(res, 'google_failed')
+
+    const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!profileResponse.ok) return redirectGoogleError(res, 'google_failed')
+    const profile = await profileResponse.json() as { sub?: string; email?: string; email_verified?: boolean; name?: string }
+    if (!profile.sub || !profile.email || profile.email_verified !== true) return redirectGoogleError(res, 'google_email_unverified')
+
+    const email = profile.email.trim().toLowerCase()
+    if (linkUserId) {
+      const sessionToken = req.cookies?.expo_session as string | undefined
+      let sessionUserId = ''
+      try {
+        const claims = sessionToken ? jwt.verify(sessionToken, jwtSecret) as jwt.JwtPayload : null
+        sessionUserId = typeof claims?.sub === 'string' ? claims.sub : ''
+      } catch { return redirectGoogleError(res, 'google_link_signin_required') }
+      if (!sessionUserId || sessionUserId !== linkUserId) return redirectGoogleError(res, 'google_link_signin_required')
+      const account = await User.findById(linkUserId)
+      if (!account) return redirectGoogleError(res, 'google_link_signin_required')
+      if (account.email !== email) return redirectGoogleError(res, 'google_link_email_mismatch')
+      if (account.googleId && account.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+      const linkedAccount = await User.findOne({ googleId: profile.sub })
+      if (linkedAccount && String(linkedAccount._id) !== String(account._id)) return redirectGoogleError(res, 'google_account_conflict')
+      account.googleId = profile.sub
+      await account.save()
+      issueSession(res, String(account._id))
+      return res.redirect('/')
+    }
+    let user = await User.findOne({ googleId: profile.sub })
+    if (!user) {
+      user = await User.findOne({ email })
+      if (user) {
+        if (user.googleId && user.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+        if (user.passwordHash) return redirectGoogleError(res, 'google_account_link_required')
+        user.googleId = profile.sub
+        await user.save()
+      } else {
+        try {
+          user = await User.create({
+            name: profile.name?.trim() || email.split('@')[0],
+            email,
+            googleId: profile.sub,
+          })
+        } catch (error) {
+          if ((error as { code?: number }).code !== 11000) throw error
+          user = await User.findOne({ $or: [{ googleId: profile.sub }, { email }] })
+          if (!user) throw error
+          if (user.googleId && user.googleId !== profile.sub) return redirectGoogleError(res, 'google_account_conflict')
+          if (!user.googleId) {
+            user.googleId = profile.sub
+            await user.save()
+          }
+        }
+      }
+    }
+
+    issueSession(res, String(user._id))
+    return res.redirect('/')
+  } catch (error) {
+    console.error('Google sign-in failed:', error)
+    return redirectGoogleError(res, 'google_failed')
+  }
+}))
+
+app.post('/api/auth/register', asyncRoute(async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(1).max(100), email: z.string().trim().email().max(254), password: z.string().min(10).max(128) }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Enter your name, a valid email and a password with at least 10 characters.' })
+  const { name, email, password } = parsed.data
+  try {
+    const user = await User.create({ name, email: email.toLowerCase(), passwordHash: await bcrypt.hash(password, 12) })
+    issueSession(res, String(user._id))
+    return res.status(201).json({ user: { id: user._id, name: user.name, email: user.email } })
+  } catch (error) {
+    if ((error as { code?: number }).code === 11000) return res.status(409).json({ message: 'An account already uses this email. Sign in instead.' })
+    throw error
+  }
+}))
+app.post('/api/auth/login', asyncRoute(async (req, res) => {
+  const parsed = z.object({ email: z.string().trim().email(), password: z.string().min(1) }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Enter your email and password.' })
+  const user = await User.findOne({ email: parsed.data.email.toLowerCase() })
+  if (!user?.passwordHash || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) return res.status(401).json({ message: 'Email or password is incorrect.' })
+  issueSession(res, String(user._id))
+  return res.json({ user: { id: user._id, name: user.name, email: user.email } })
+}))
+app.post('/api/auth/logout', (_req, res) => res.clearCookie('expo_session', cookieOptions).json({ ok: true }))
+app.get('/api/auth/me', auth, asyncRoute(async (req, res) => {
+  const user = await User.findById(req.userId).select('name email googleId passwordHash')
+  if (!user) return res.status(401).json({ message: 'Account not found.' })
+  return res.json({ user: { id: user._id, name: user.name, email: user.email, googleConnected: Boolean(user.googleId), passwordLogin: Boolean(user.passwordHash) } })
+}))
+
+const appearanceSchema = z.object({ accent: z.enum(['ember', 'ocean', 'forest', 'plum', 'slate']), density: z.enum(['comfortable', 'compact']) })
+const defaultAppearance = { accent: 'ember' as const, density: 'comfortable' as const }
+app.get('/api/preferences', auth, asyncRoute(async (req, res) => {
+  const user = await User.findById(req.userId).select('preferences').lean()
+  if (!user) return res.status(404).json({ message: 'Account not found.' })
+  return res.json({ ...defaultAppearance, ...user.preferences })
+}))
+app.patch('/api/preferences', auth, asyncRoute(async (req, res) => {
+  const parsed = appearanceSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Choose a valid accent and layout density.' })
+  const user = await User.findByIdAndUpdate(req.userId, { $set: { preferences: parsed.data } }, { new: true }).select('preferences').lean()
+  if (!user) return res.status(404).json({ message: 'Account not found.' })
+  return res.json({ ...defaultAppearance, ...user.preferences })
+}))
+
+app.get('/api/dashboard', auth, asyncRoute(async (req, res) => {
+  const userId = req.userId!
+  const [expoCount, leadCount, statusCounts, expos, activities] = await Promise.all([
+    Expo.countDocuments(userOnly(req)), Lead.countDocuments(userOnly(req)),
+    Lead.aggregate([{ $match: { userId: new Types.ObjectId(userId) } }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+    Expo.aggregate([{ $match: { userId: new Types.ObjectId(userId) } }, { $lookup: { from: 'leads', let: { expoId: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$expoId', '$$expoId'] } } }, { $group: { _id: '$status', count: { $sum: 1 } } }], as: 'statusCounts' } }, { $addFields: { leadCount: { $sum: '$statusCounts.count' } } }, { $sort: { startDate: -1, createdAt: -1 } }, { $limit: 5 }]),
+    Activity.find(userOnly(req)).sort({ createdAt: -1 }).limit(8).populate('expoId', 'name').lean(),
+  ])
+  const counts = Object.fromEntries(statusCounts.map((item: { _id: string; count: number }) => [item._id, item.count]))
+  return res.json({ stats: { expoCount, leadCount, new: counts.new || 0, interested: counts.interested || 0, called: counts.called || 0, notInterested: counts['not-interested'] || 0, goodPresence: counts['good-presence'] || 0 }, expos, activities })
+}))
+
+app.get('/api/expos', auth, asyncRoute(async (req, res) => {
+  const search = String(req.query.search || '').trim()
+  const regex = search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : null
+  const filter = { userId: new Types.ObjectId(req.userId!), ...(regex ? { $or: [{ name: regex }, { venue: regex }, { city: regex }, { organizer: regex }] } : {}) }
+  const rows = await Expo.aggregate([{ $match: filter }, { $lookup: { from: 'leads', let: { id: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$expoId', '$$id'] } } }, { $group: { _id: '$status', count: { $sum: 1 } } }], as: 'counts' } }, { $addFields: { leadCount: { $sum: '$counts.count' }, interested: { $sum: { $map: { input: '$counts', as: 's', in: { $cond: [{ $eq: ['$$s._id', 'interested'] }, '$$s.count', 0] } } } } } }, { $sort: { startDate: -1, createdAt: -1 } }])
+  return res.json(rows)
+}))
+app.post('/api/expos', auth, asyncRoute(async (req, res) => {
+  const parsed = expoSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || 'Expo name is required.' })
+  const expo = await Expo.create({ ...parsed.data, ...userOnly(req) })
+  await recordActivity(req.userId!, `Created ${expo.name}`, { action: 'expo.created', expoId: expo._id })
+  return res.status(201).json(expo)
+}))
+app.get('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const [expo] = await Expo.aggregate([{ $match: { _id: new Types.ObjectId(expoId), userId: new Types.ObjectId(req.userId!) } }, { $lookup: { from: 'leads', let: { id: '$_id' }, pipeline: [{ $match: { $expr: { $eq: ['$expoId', '$$id'] } } }, { $group: { _id: '$status', count: { $sum: 1 } } }], as: 'counts' } }, { $addFields: { leadCount: { $sum: '$counts.count' }, interested: { $sum: { $map: { input: '$counts', as: 's', in: { $cond: [{ $eq: ['$$s._id', 'interested'] }, '$$s.count', 0] } } } } } }])
+  return expo ? res.json(expo) : res.status(404).json({ message: 'Expo not found.' })
+}))
+app.put('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.expoId))) return res.status(400).json({ message: 'Invalid expo.' })
+  const parsed = expoSchema.safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || 'Expo name is required.' })
+  const expo = await Expo.findOneAndUpdate({ _id: param(req.params.expoId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true })
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  await recordActivity(req.userId!, `Updated ${expo.name}`, { action: 'expo.updated', expoId: expo._id })
+  return res.json(expo)
+}))
+app.delete('/api/expos/:expoId', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.expoId))) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(param(req.params.expoId), req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  await Promise.all([Lead.deleteMany({ expoId: expo._id, ...userOnly(req) }), Activity.deleteMany({ expoId: expo._id, ...userOnly(req) }), expo.deleteOne()])
+  await recordActivity(req.userId!, `Deleted ${expo.name} and its leads`, { action: 'expo.deleted' })
+  return res.json({ ok: true })
+}))
+
+app.post('/api/expos/:expoId/reset-status', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  const targetStatus = isStatus(req.body.status) ? req.body.status : 'new'
+  const result = await Lead.updateMany({ expoId: expo._id, ...userOnly(req) }, { status: targetStatus })
+  await recordActivity(req.userId!, `Set all ${result.modifiedCount} leads in ${expo.name} to ${statusLabel(targetStatus)}`, { action: 'expo.reset-status', expoId: expo._id, metadata: { count: result.modifiedCount, status: targetStatus } })
+  return res.json({ updated: result.modifiedCount, status: targetStatus })
+}))
+
+app.get('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  if (!(await getOwnedExpo(expoId, req.userId!))) return res.status(404).json({ message: 'Expo not found.' })
+  const query = leadQuery(req, expoId)
+  const [items, total] = await Promise.all([Lead.find(query.filter).sort(query.sort).skip(query.skip).limit(query.limit).lean(), Lead.countDocuments(query.filter)])
+  return res.json({ items: items.map(sanitizeLead), total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
+}))
+app.get('/api/expos/:expoId/filters', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  if (!(await getOwnedExpo(expoId, req.userId!))) return res.status(404).json({ message: 'Expo not found.' })
+  const filter = { expoId, ...userOnly(req) }
+  const [categories, cities, sources] = await Promise.all([Lead.distinct('businessCategory', filter), Lead.distinct('city', filter), Lead.distinct('source', filter)])
+  return res.json({ categories: categories.filter(Boolean).sort(), cities: cities.filter(Boolean).sort(), sources: sources.filter(Boolean).sort() })
+}))
+app.post('/api/expos/:expoId/leads', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  const parsed = leadSchema.safeParse(req.body)
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || 'Add a company name or contact person, then check the details and try again.'
+    return res.status(400).json({ message })
+  }
+  const lead = await Lead.create({ ...parsed.data, ...userOnly(req), expoId: expo._id, source: parsed.data.source || 'Manual entry' })
+  await recordActivity(req.userId!, `Added ${lead.personName || lead.companyName || 'a lead'} to ${expo.name}`, { action: 'lead.created', expoId: expo._id, leadId: lead._id })
+  return res.status(201).json(sanitizeLead(lead.toObject()))
+}))
+app.get('/api/leads', auth, asyncRoute(async (req, res) => {
+  const query = leadQuery(req)
+  const [items, total] = await Promise.all([Lead.find(query.filter).sort(query.sort).skip(query.skip).limit(query.limit).populate('expoId', 'name').lean(), Lead.countDocuments(query.filter)])
+  return res.json({ items: items.map(sanitizeLead), total, page: query.page, pageSize: query.limit, pages: Math.ceil(total / query.limit) })
+}))
+app.get('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
+  const lead = await Lead.findOne({ _id: param(req.params.leadId), ...userOnly(req) }).populate('expoId', 'name startDate city venue').lean()
+  return lead ? res.json(sanitizeLead(lead)) : res.status(404).json({ message: 'Lead not found.' })
+}))
+app.put('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
+  const parsed = leadSchema.safeParse(req.body)
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message || 'Add a company name or contact person, then check the details and try again.'
+    return res.status(400).json({ message })
+  }
+  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, parsed.data, { new: true, runValidators: true }).lean()
+  if (!lead) return res.status(404).json({ message: 'Lead not found.' })
+  await recordActivity(req.userId!, `Updated ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.updated', expoId: lead.expoId, leadId: lead._id })
+  return res.json(sanitizeLead(lead))
+}))
+app.patch('/api/leads/:leadId/status', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.leadId)) || !isStatus(req.body.status)) return res.status(400).json({ message: 'Choose a valid lead status.' })
+  const lead = await Lead.findOneAndUpdate({ _id: param(req.params.leadId), ...userOnly(req) }, { status: req.body.status }, { new: true }).lean()
+  if (!lead) return res.status(404).json({ message: 'Lead not found.' })
+  await recordActivity(req.userId!, `${lead.personName || lead.companyName || 'A lead'} moved to ${statusLabel(lead.status)}`, { action: 'lead.status', expoId: lead.expoId, leadId: lead._id, metadata: { status: lead.status } })
+  return res.json(sanitizeLead(lead))
+}))
+app.post('/api/leads/bulk-status', auth, asyncRoute(async (req, res) => {
+  const parsed = z.object({ ids: z.array(z.string().refine(objectId)).min(1).max(500), status: z.enum(statuses) }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Select leads and a valid status.' })
+  const result = await Lead.updateMany({ _id: { $in: parsed.data.ids }, ...userOnly(req) }, { status: parsed.data.status })
+  await recordActivity(req.userId!, `Changed ${result.modifiedCount} leads to ${statusLabel(parsed.data.status)}`, { action: 'lead.bulk-status', metadata: { count: result.modifiedCount, status: parsed.data.status } })
+  return res.json({ updated: result.modifiedCount })
+}))
+app.delete('/api/leads/:leadId', auth, asyncRoute(async (req, res) => {
+  if (!objectId(param(req.params.leadId))) return res.status(400).json({ message: 'Invalid lead.' })
+  const lead = await Lead.findOneAndDelete({ _id: param(req.params.leadId), ...userOnly(req) })
+  if (!lead) return res.status(404).json({ message: 'Lead not found.' })
+  await recordActivity(req.userId!, `Deleted ${lead.personName || lead.companyName || 'a lead'}`, { action: 'lead.deleted', expoId: lead.expoId })
+  return res.json({ ok: true })
+}))
+
+const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 4 * 1024 * 1024, files: 1 }, fileFilter: (_req, file, cb) => cb(null, /\.(xlsx|xls)$/i.test(file.originalname)) })
+app.post('/api/expos/:expoId/import/preview', auth, memoryUpload.single('file'), asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  if (!req.file) return res.status(400).json({ message: 'Choose an .xlsx or .xls file up to 4 MB.' })
+  let rows: Record<string, unknown>[]
+  try {
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true })
+    const sheet = workbook.Sheets[workbook.SheetNames[0]]
+    if (!sheet) return res.status(400).json({ message: 'The workbook has no sheets.' })
+    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+  } catch { return res.status(400).json({ message: 'This Excel file could not be read.' }) }
+  if (!rows.length) return res.status(400).json({ message: 'No data rows were found in the first sheet.' })
+  if (rows.length > 3000) return res.status(400).json({ message: 'This spreadsheet has more than 3,000 rows. Split it into smaller files and import each one.' })
+  let mapping: Record<string, string> = autoMap(Object.keys(rows[0] || {}))
+  if (req.body.mapping) {
+    try {
+      const supplied = JSON.parse(String(req.body.mapping)) as unknown
+      const checked = z.record(z.string(), z.string()).safeParse(supplied)
+      if (!checked.success) return res.status(400).json({ message: 'Column mapping is invalid.' })
+      mapping = checked.data
+    } catch { return res.status(400).json({ message: 'Column mapping is invalid.' }) }
+  }
+  const headers = Object.keys(rows[0] || {})
+  const mapped = rows.map((row) => mapExcelRow(row, mapping))
+  const existing = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email otherEmails').lean()
+  const duplicateSet = new Set<string>()
+  for (const lead of existing) duplicateKeys(lead).forEach((key) => duplicateSet.add(key))
+  let duplicates = 0
+  let invalid = 0
+  const seenInFile = new Set<string>()
+  const preview = mapped.map((row, index) => {
+    const parsed = leadSchema.safeParse(row)
+    if (!parsed.success || !(row.companyName?.trim() || row.personName?.trim())) { invalid++; return { rowNumber: index + 2, data: row, issue: row.companyName?.trim() || row.personName?.trim() ? 'Check field format' : 'Company or contact name is required', duplicate: false, valid: false } }
+    const keys = duplicateKeys(row)
+    const duplicate = keys.some((key) => duplicateSet.has(key) || seenInFile.has(key))
+    if (duplicate) duplicates++
+    else keys.forEach((key) => seenInFile.add(key))
+    return { rowNumber: index + 2, data: parsed.data, duplicate, valid: true }
+  })
+  return res.json({ total: rows.length, valid: rows.length - invalid - duplicates, duplicates, invalid, rows: preview.slice(0, 7), truncated: preview.length > 7, headers, mapping })
+}))
+app.get('/api/expos/:expoId/import/template', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  const expo = objectId(expoId) ? await getOwnedExpo(expoId, req.userId!) : null
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  const workbook = XLSX.utils.book_new()
+  const sheet = XLSX.utils.aoa_to_sheet([['Date Visited', 'Company Name', 'Category', 'Contact Person', 'Designation', 'Mobile Number 1', 'Other Mobile Numbers', 'Email', 'Website', 'Social Media Platform', 'Social Media Link', 'LinkedIn', 'Instagram', 'Facebook', 'YouTube']])
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Leads')
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="${expo.name.replace(/[^a-z0-9]+/gi, '_')}_Lead_Template.xlsx"`)
+  return res.send(buffer)
+}))
+app.post('/api/expos/:expoId/import', auth, memoryUpload.single('file'), asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  if (!req.file) return res.status(400).json({ message: 'Choose an .xlsx or .xls file up to 4 MB.' })
+  let rows: Record<string, unknown>[]
+  try {
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true })
+    const sheet = workbook.Sheets[workbook.SheetNames[0]]
+    if (!sheet) return res.status(400).json({ message: 'The workbook has no sheets.' })
+    rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+  } catch { return res.status(400).json({ message: 'This Excel file could not be read.' }) }
+  if (!rows.length) return res.status(400).json({ message: 'No data rows were found in the first sheet.' })
+  if (rows.length > 3000) return res.status(400).json({ message: 'This spreadsheet has more than 3,000 rows. Split it into smaller files and import each one.' })
+  let mapping: Record<string, string> = autoMap(Object.keys(rows[0] || {}))
+  if (req.body.mapping) {
+    try {
+      const supplied = JSON.parse(String(req.body.mapping)) as unknown
+      const checked = z.record(z.string(), z.string()).safeParse(supplied)
+      if (!checked.success) return res.status(400).json({ message: 'Column mapping is invalid.' })
+      mapping = checked.data
+    } catch { return res.status(400).json({ message: 'Column mapping is invalid.' }) }
+  }
+  const mappedRows = rows.map((row) => mapExcelRow(row, mapping))
+  const current = await Lead.find({ expoId: expo._id, ...userOnly(req) }).select('personName companyName primaryPhone otherPhones email otherEmails').lean()
+  const keys = new Set(current.flatMap(duplicateKeys))
+  const accepted: Record<string, unknown>[] = []
+  let duplicates = 0, invalid = 0
+  for (const raw of mappedRows) {
+    const checked = leadSchema.safeParse(raw)
+    if (!checked.success || !(checked.data.companyName?.trim() || checked.data.personName?.trim())) { invalid++; continue }
+    const rowKeys = duplicateKeys(checked.data)
+    if (rowKeys.some((key) => keys.has(key))) { duplicates++; continue }
+    rowKeys.forEach((key) => keys.add(key))
+    accepted.push({ ...checked.data, userId: req.userId, expoId: expo._id, source: checked.data.source || 'Excel import' })
+  }
+  if (accepted.length) await Lead.insertMany(accepted, { ordered: false })
+  if (accepted.length) await recordActivity(req.userId!, `Imported ${accepted.length} leads to ${expo.name}`, { action: 'lead.imported', expoId: expo._id, metadata: { count: accepted.length, duplicates, invalid } })
+  return res.json({ imported: accepted.length, duplicates, invalid })
+}))
+
+app.get('/api/expos/:expoId/analytics', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  if (!(await getOwnedExpo(expoId, req.userId!))) return res.status(404).json({ message: 'Expo not found.' })
+  const match = { expoId: new Types.ObjectId(expoId), userId: new Types.ObjectId(req.userId!) }
+  const [statuses, categories, trend, completeness] = await Promise.all([
+    Lead.aggregate([{ $match: match }, { $group: { _id: '$status', count: { $sum: 1 } } }]),
+    Lead.aggregate([{ $match: match }, { $group: { _id: { $ifNull: ['$businessCategory', 'Uncategorized'] }, count: { $sum: 1 } } }, { $sort: { count: -1 } }, { $limit: 8 }]),
+    Lead.aggregate([{ $match: match }, { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }, { $limit: 31 }]),
+    Lead.aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: 1 }, withPhone: { $sum: { $cond: [{ $ne: ['$primaryPhone', ''] }, 1, 0] } }, withEmail: { $sum: { $cond: [{ $ne: ['$email', ''] }, 1, 0] } }, withCompany: { $sum: { $cond: [{ $ne: ['$companyName', ''] }, 1, 0] } } } }]),
+  ])
+  return res.json({ statuses, categories, trend, completeness: completeness[0] || { total: 0, withPhone: 0, withEmail: 0, withCompany: 0 } })
+}))
+
+app.get('/api/activity', auth, asyncRoute(async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(50, Math.max(1, Number(req.query.pageSize) || 20))
+  const filter = { ...userOnly(req), ...(objectId(req.query.expoId) ? { expoId: req.query.expoId } : {}) }
+  const [items, total] = await Promise.all([Activity.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('expoId', 'name').lean(), Activity.countDocuments(filter)])
+  return res.json({ items, total, page, pages: Math.ceil(total / limit) })
+}))
+
+app.post('/api/expos/:expoId/export', auth, asyncRoute(async (req, res) => {
+  const expoId = param(req.params.expoId)
+  if (!objectId(expoId)) return res.status(400).json({ message: 'Invalid expo.' })
+  const expo = await getOwnedExpo(expoId, req.userId!)
+  if (!expo) return res.status(404).json({ message: 'Expo not found.' })
+  const parsed = z.object({ statuses: z.array(z.enum(statuses)).optional(), leadIds: z.array(z.string().refine(objectId)).optional() }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ message: 'Invalid export selection.' })
+  const filter: Record<string, unknown> = { expoId: expo._id, ...userOnly(req) }
+  if (parsed.data.statuses?.length) filter.status = { $in: parsed.data.statuses }
+  if (parsed.data.leadIds?.length) filter._id = { $in: parsed.data.leadIds }
+  const leads = await Lead.find(filter).sort({ createdAt: -1 }).lean()
+  const exportHeaders = ['Date', 'Company Name', 'Contact Person Name', 'Mobile', 'Email', 'Landline', 'Website', 'Service', 'Category', 'Budget', 'Source', 'Status']
+  const rows = leads.map(({ visitDate, createdAt, companyName, personName, primaryPhone, otherPhones, email, otherEmails, website }) => ({
+    Date: new Date(visitDate || createdAt).toISOString().slice(0, 10),
+    'Company Name': companyName || '',
+    'Contact Person Name': personName || '',
+    Mobile: [primaryPhone, ...(otherPhones || [])].filter(Boolean).join(', '),
+    Email: [email, ...(otherEmails || [])].filter(Boolean).join(', '),
+    Landline: '',
+    Website: website || '',
+    Service: '',
+    Category: '',
+    Budget: '',
+    Source: 'Expo',
+    Status: '',
+  }))
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows, { header: exportHeaders }), 'Leads')
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+  const filename = `${expo.name.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}_Leads.xlsx`
+  await recordActivity(req.userId!, `Exported ${leads.length} leads from ${expo.name}`, { action: 'lead.exported', expoId: expo._id, metadata: { count: leads.length } })
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  return res.send(buffer)
+}))
+
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  void _next
+  console.error(err)
+  if (err instanceof multer.MulterError) return res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Excel file must be 4 MB or smaller.' : 'Excel file could not be uploaded.' })
+  return res.status(500).json({ message: 'Something went wrong. Please try again.' })
+})
+
+const optionalDate = z.preprocess((val) => {
+  if (!val || val === '' || val === null || val === undefined) return undefined
+  const d = new Date(val as string | number | Date)
+  return Number.isNaN(d.getTime()) ? undefined : d
+}, z.date().optional())
+
+const optionalStringArray = z.preprocess((val) => {
+  if (!val || val === '' || val === null || val === undefined) return []
+  if (Array.isArray(val)) return val.map((item) => String(item).trim()).filter(Boolean)
+  if (typeof val === 'string') return val.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean)
+  return []
+}, z.array(z.string().max(254)).optional().default([]))
+
+const expoSchema = z.object({
+  name: z.string().trim().min(1, 'Expo name is required.').max(160),
+  startDate: optionalDate,
+  endDate: optionalDate,
+  venue: z.string().max(180).optional(),
+  city: z.string().max(120).optional(),
+  organizer: z.string().max(180).optional(),
+  website: z.string().max(300).optional(),
+  description: z.string().max(2000).optional(),
+  notes: z.string().max(5000).optional(),
+}).transform((data) => ({
+  ...data,
+  startDate: data.startDate || undefined,
+  endDate: data.endDate || undefined,
+}))
+function extractEmails(val: unknown): string[] {
+  if (!val) return []
+  if (Array.isArray(val)) return [...new Set(val.flatMap(extractEmails))]
+  const text = String(val).trim()
+  if (!text) return []
+  const matches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g)
+  if (matches && matches.length > 0) {
+    return [...new Set(matches.map((e) => e.trim().toLowerCase()))]
+  }
+  const parts = text.split(/[,;|/\n\s]+/).map((s) => s.replace(/^[<([\]+|[>)\].,;]+$/g, '').trim().toLowerCase()).filter(Boolean)
+  return [...new Set(parts.filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)))]
+}
+
+function toWhatsAppNumber(val?: string | null): string {
+  if (!val) return ''
+  const digits = String(val).replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) return `91${digits}`
+  if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`
+  if (digits.length === 12 && digits.startsWith('91')) return digits
+  return digits
+}
+
+function cleanDisplayPhone(val?: string | null): string {
+  if (!val) return ''
+  const trimmed = String(val).trim()
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1)
+  return trimmed.replace(/^\+91[\s-]*/, '')
+}
+
+function sanitizeLead<T extends Record<string, unknown>>(lead: T): T {
+  if (!lead) return lead
+  const primaryPhone = cleanDisplayPhone(lead.primaryPhone as string | undefined)
+  const otherPhones = Array.isArray(lead.otherPhones) ? (lead.otherPhones as string[]).map(cleanDisplayPhone) : []
+  const whatsappPhone = toWhatsAppNumber(lead.primaryPhone as string | undefined)
+  const whatsappUrl = whatsappPhone ? `https://wa.me/${whatsappPhone}` : ''
+  return {
+    ...lead,
+    primaryPhone,
+    otherPhones,
+    whatsappPhone,
+    whatsappUrl,
+  }
+}
+
+function extractPhones(val: unknown): string[] {
+  if (!val) return []
+  if (Array.isArray(val)) return [...new Set(val.flatMap(extractPhones))]
+  const text = String(val).trim()
+  if (!text) return []
+  const parts = text.split(/[,;|/\n]+/).map((s) => cleanDisplayPhone(s.trim())).filter(Boolean)
+  return [...new Set(parts.filter((s) => s.replace(/\D/g, '').length >= 5))]
+}
+
+const leadSchema = z.object({
+  personName: z.string().trim().max(160).optional(),
+  contactPerson: z.string().trim().max(160).optional(),
+  name: z.string().trim().max(160).optional(),
+  visitDate: optionalDate,
+  companyName: z.string().trim().max(180).optional(),
+  designation: z.string().max(160).optional(),
+  primaryPhone: z.string().max(200).optional().default(''),
+  mobile: z.string().max(200).optional().default(''),
+  phone: z.string().max(200).optional().default(''),
+  otherPhones: optionalStringArray,
+  email: z.string().max(2000).optional().default(''),
+  otherEmails: optionalStringArray,
+  website: z.string().max(300).optional(),
+  socialPlatform: z.string().max(80).optional(),
+  socialProfile: z.string().max(300).optional(),
+  socialMedia: z.record(z.string(), z.string().max(300).optional()).optional(),
+  businessCategory: z.string().max(120).optional(),
+  address: z.string().max(500).optional(),
+  city: z.string().max(120).optional(),
+  state: z.string().max(120).optional(),
+  pincode: z.string().max(20).optional(),
+  status: z.enum(statuses).optional().default('new'),
+  notes: z.string().max(5000).optional(),
+  source: z.string().max(120).optional(),
+}).refine((data) => Boolean(data.companyName?.trim() || data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim()), {
+  message: 'Add a company name or contact person, then check the details and try again.',
+}).transform((data) => {
+  const personName = data.personName?.trim() || data.contactPerson?.trim() || data.name?.trim() || ''
+  const rawEmails: unknown[] = [data.email, data.otherEmails]
+  const emails = extractEmails(rawEmails)
+  const primaryEmail = emails[0] || (data.email && !data.email.includes('@') ? '' : (data.email?.trim() || ''))
+  const otherEmails = emails.length > 1 ? emails.slice(1) : (Array.isArray(data.otherEmails) ? data.otherEmails : extractEmails(data.otherEmails))
+
+  const rawPhones: unknown[] = [data.primaryPhone, data.mobile, data.phone, data.otherPhones]
+  const phones = extractPhones(rawPhones)
+  const primaryPhone = cleanDisplayPhone(phones[0] || (data.primaryPhone?.trim() || data.mobile?.trim() || data.phone?.trim() || ''))
+  const otherPhones = (phones.length > 1 ? phones.slice(1) : (Array.isArray(data.otherPhones) ? data.otherPhones : extractPhones(data.otherPhones))).map(cleanDisplayPhone)
+
+  return {
+    ...data,
+    personName,
+    visitDate: data.visitDate || undefined,
+    primaryPhone,
+    otherPhones,
+    email: primaryEmail,
+    otherEmails,
+  }
+})
+
+function leadQuery(req: AuthedRequest, expoId?: string) {
+  const page = Math.max(1, Number(req.query.page) || 1)
+  const limit = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20))
+  const filter: Record<string, unknown> = { ...userOnly(req), ...(expoId ? { expoId } : {}) }
+  if (req.query.status && isStatus(req.query.status)) filter.status = req.query.status
+  if (req.query.category) filter.businessCategory = String(req.query.category)
+  if (req.query.city) filter.city = String(req.query.city)
+  if (req.query.source) filter.source = String(req.query.source)
+  if (req.query.search) {
+    const escaped = String(req.query.search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(escaped, 'i')
+    filter.$or = [{ personName: regex }, { companyName: regex }, { primaryPhone: regex }, { otherPhones: regex }, { email: regex }, { otherEmails: regex }, { businessCategory: regex }, { city: regex }, { website: regex }, { notes: regex }]
+  }
+  const sortKey = String(req.query.sort || 'newest')
+  const sort: Record<string, 1 | -1> = sortKey === 'oldest' ? { createdAt: 1 } : sortKey === 'name' ? { personName: 1 } : { createdAt: -1 }
+  return { filter, page, limit, skip: (page - 1) * limit, sort }
+}
+const columnAliases: Record<string, string[]> = {
+  visitDate: ['visitdate', 'datevisited', 'dateofvisit', 'visitedon', 'visit', 'date'],
+  personName: ['personname', 'fullname', 'contactperson', 'contactpersonname', 'contactpersonifavailable', 'contactname', 'name'], companyName: ['companyname', 'company', 'businessname', 'organization', 'business'],
+  designation: ['designation', 'designationifavailable', 'title', 'jobtitle', 'role'], primaryPhone: ['primaryphone', 'primarynumber', 'primarymobile', 'primarymobileno', 'primarymobilenumber', 'mobilenumber1', 'mobile1', 'mobileno1', 'mobile', 'mobileno', 'mobilenumber', 'phone1', 'phonenumber1', 'phone', 'number1', 'number', 'contactnumber1', 'contactnumber'],
+  otherPhones: ['otherphones', 'othernumbers', 'othermobilenumber', 'othermobilenumbers', 'othermobilenumberifavailable', 'othermobileno', 'othermobilenos', 'othernumber', 'alternatenumbers', 'alternatemobile', 'mobile2', 'mobilenumber2', 'alternatephone', 'otherphone'], otherPhones3: ['mobile3', 'mobilenumber3', 'phone2'], email: ['email', 'emailaddress', 'emailid', 'emailifavailable', 'emails'],
+  website: ['website', 'websiteifavailable', 'web', 'url', 'companywebsite'], socialPlatform: ['socialmediaplatform', 'socialmediaplatformifavailable', 'socialplatform', 'socialnetwork'], socialProfile: ['socialmedia', 'socialmediaprofile', 'socialmediaifavailable', 'socialmediaifavailableoncard', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'], businessCategory: ['businesscategory', 'businesscategoryoptional', 'businesscategoryifavailable', 'category', 'categoryifavailable', 'categoryofbusiness', 'categoryofbusinessifavailable', 'industry'], city: ['city', 'town'], state: ['state', 'region'],
+  pincode: ['pincode', 'zipcode', 'postalcode'], address: ['address', 'location'], notes: ['notes', 'note', 'remarks'], status: ['status', 'leadstatus'],
+  linkedin: ['linkedin', 'linkedinurl'], instagram: ['instagram', 'instagramurl'], facebook: ['facebook', 'facebookurl'], youtube: ['youtube', 'youtubeurl'],
+}
+const normalizeColumn = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
+const isOtherPhoneColumn = (header: string) => /^(other|alternate|alt).*(number|phone|mobile)/.test(normalizeColumn(header)) || /^(mobile|mobilenumber|phone|phonenumber|contactnumber)[2-9]\d*$/.test(normalizeColumn(header))
+function autoMap(headers: string[]) {
+  return Object.fromEntries(Object.entries(columnAliases).map(([field, aliases]) => {
+    const header = headers.find((value) => aliases.includes(normalizeColumn(value)) || (field === 'otherPhones' && isOtherPhoneColumn(value)))
+    return [field, header || '']
+  }))
+}
+function excelVisitDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parts = XLSX.SSF.parse_date_code(value)
+    if (parts) return `${String(parts.y).padStart(4, '0')}-${String(parts.m).padStart(2, '0')}-${String(parts.d).padStart(2, '0')}`
+  }
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const dayFirst = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/)
+  if (dayFirst) {
+    const [, day, month, rawYear] = dayFirst
+    const year = rawYear.length === 2 ? `${Number(rawYear) >= 50 ? '19' : '20'}${rawYear}` : rawYear
+    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+    return date.getUTCFullYear() === Number(year) && date.getUTCMonth() === Number(month) - 1 && date.getUTCDate() === Number(day) ? `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}` : text
+  }
+  const date = new Date(text)
+  return Number.isNaN(date.getTime()) ? text : date.toISOString().slice(0, 10)
+}
+function mapExcelRow(row: Record<string, unknown>, mapping: Record<string, string> = {}) {
+  const normalized = Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizeColumn(key), String(value ?? '').trim()]))
+  const pick = (field: string, ...aliases: string[]) => {
+    const mappedColumn = mapping[field] ? normalized[normalizeColumn(mapping[field])] : undefined
+    return mappedColumn || (columnAliases[field] || aliases).map((key) => normalized[key]).find((value) => value !== undefined) || ''
+  }
+  const rawDate = mapping.visitDate ? row[mapping.visitDate] : Object.entries(row).find(([key]) => columnAliases.visitDate.includes(normalizeColumn(key)))?.[1]
+  const rawStatus = pick('status', 'status', 'leadstatus').toLowerCase()
+  const status: LeadStatus = /called/.test(rawStatus) ? 'called' : /notinterested/.test(rawStatus) ? 'not-interested' : /alreadygood|goodpresence/.test(rawStatus) ? 'good-presence' : /interested/.test(rawStatus) ? 'interested' : 'new'
+
+  const rawPrimaryPhone = pick('primaryPhone', 'primaryphone', 'primarynumber', 'mobilenumber1', 'mobile', 'mobilenumber', 'phone', 'number', 'contactnumber')
+  const allPhonesFromPrimary = extractPhones(rawPrimaryPhone)
+  const primaryPhone = allPhonesFromPrimary[0] || rawPrimaryPhone
+  const otherPhoneColumns = Object.keys(row).filter(isOtherPhoneColumn)
+  if (mapping.otherPhones && row[mapping.otherPhones] !== undefined) otherPhoneColumns.push(mapping.otherPhones)
+  const extraPhones = [
+    ...allPhonesFromPrimary.slice(1),
+    ...otherPhoneColumns.flatMap((column) => extractPhones(row[column]))
+  ]
+  const otherPhones = [...new Set(extraPhones)].filter((p) => p !== primaryPhone)
+
+  const rawEmail = pick('email', 'email', 'emailaddress')
+  const allEmails = extractEmails(rawEmail)
+  const email = allEmails[0] || rawEmail
+  const otherEmails = allEmails.slice(1)
+
+  return {
+    visitDate: excelVisitDate(rawDate), personName: pick('personName', 'personname', 'fullname', 'name', 'contactname'), companyName: pick('companyName', 'companyname', 'company', 'businessname', 'organization'), designation: pick('designation', 'designation', 'title', 'jobtitle'),
+    primaryPhone, otherPhones,
+    email, otherEmails, website: pick('website', 'website', 'web', 'url'), businessCategory: pick('businessCategory', 'businesscategory', 'category', 'industry'),
+    socialPlatform: pick('socialPlatform', 'socialmediaplatform', 'socialplatform', 'socialnetwork') || (pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink') ? 'Social media' : ''), socialProfile: pick('socialProfile', 'socialmedia', 'socialmediaprofile', 'socialmedialink', 'socialprofile', 'sociallink', 'socialmediaurl', 'profilelink'),
+    socialMedia: { linkedin: pick('linkedin', 'linkedin', 'linkedinurl'), instagram: pick('instagram', 'instagram', 'instagramurl'), facebook: pick('facebook', 'facebook', 'facebookurl'), youtube: pick('youtube', 'youtube', 'youtubeurl') },
+    city: pick('city', 'city', 'town'), state: pick('state', 'state', 'region'), pincode: pick('pincode', 'pincode', 'zipcode', 'postalcode'), address: pick('address', 'address', 'location'), notes: pick('notes', 'notes', 'note', 'remarks'), status, source: 'Excel import',
+  }
+}
+function duplicateKeys(lead: { personName?: string | null; companyName?: string | null; primaryPhone?: string | null; otherPhones?: string[] | null; email?: string | null; otherEmails?: string[] | null }) {
+  const keys = [lead.primaryPhone, ...(lead.otherPhones || [])].map((item) => (item || '').replace(/\D/g, '')).filter((phone) => phone.length >= 7).map((phone) => `phone:${phone}`)
+  const emails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean)
+  for (const item of emails) {
+    if (item?.trim()) keys.push(`email:${item.trim().toLowerCase()}`)
+  }
+  if (lead.personName?.trim() && lead.companyName?.trim()) keys.push(`name:${lead.personName.trim().toLowerCase()}|${lead.companyName.trim().toLowerCase()}`)
+  return keys.length ? keys : [`name:${(lead.personName || '').trim().toLowerCase()}|${(lead.companyName || '').trim().toLowerCase()}`]
+}
+function statusLabel(status?: string) { return ({ new: 'New Inquiry', interested: 'Interested', called: 'Called', 'not-interested': 'Not interested', 'good-presence': 'Already good presence' } as Record<string, string>)[status || ''] || 'New Inquiry' }
+
+export default app

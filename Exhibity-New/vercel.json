@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "npm ci --include=dev",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/.git", "destination": "/api/bridge?__route=denied" },
+    { "source": "/.git/:path*", "destination": "/api/bridge?__route=denied" },
+    { "source": "/.env", "destination": "/api/bridge?__route=denied" },
+    { "source": "/.env:path*", "destination": "/api/bridge?__route=denied" },
+    { "source": "/api/:path*", "destination": "/api/bridge?__route=:path*" },
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/:path((?!api/|\\.).*)", "destination": "/index.html" }
+  ]
+}

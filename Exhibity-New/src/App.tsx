@@ -1,0 +1,747 @@
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Activity as ActivityIcon, ArrowDownToLine, ArrowLeft, ArrowUpRight, Bell, Building2, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Copy, Download, FileSpreadsheet, Globe2, LayoutDashboard, LoaderCircle, LogOut, Mail, MapPin, MoreHorizontal, Pencil, Phone, Plus, RotateCcw, Search, Settings, ShieldCheck, Sparkles, Tags, Trash2, Upload, UserCircle2, Users, X, Zap } from 'lucide-react'
+import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { format, isValid, parseISO } from 'date-fns'
+import { api, json } from './api'
+import { statuses, type CustomizationPreferences, type Expo, type Lead, type Page, type Status, type User } from './types'
+
+type ToastFn = (message: string, tone?: 'success' | 'error') => void
+let notify: ToastFn = () => undefined
+const useNotify = () => notify
+const safeDate = (value?: string, pattern = 'dd MMM yyyy') => { if (!value) return 'Date not set'; const date = parseISO(value); return isValid(date) ? format(date, pattern) : 'Date not set' }
+const expoLogoUrl = (website?: string) => {
+  if (!website?.trim()) return ''
+  try {
+    const site = new URL(/^https?:\/\//i.test(website.trim()) ? website.trim() : `https://${website.trim()}`)
+    if (!['http:', 'https:'].includes(site.protocol)) return ''
+    return `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(site.origin)}&sz=256`
+  } catch { return '' }
+}
+const statusLabel = (status: Status) => statuses.find((item) => item.value === status)?.label || 'New Inquiry'
+const queryString = (values: Record<string, string | number | undefined>) => { const params = new URLSearchParams(); Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)) }); return params.toString() }
+const initials = (name = '') => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'EL'
+const dateGreeting = () => { const hour = new Date().getHours(); return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening' }
+const importMapFields = [{ key: 'visitDate', label: 'Date visited' }, { key: 'companyName', label: 'Company name' }, { key: 'businessCategory', label: 'Category' }, { key: 'personName', label: 'Contact person (optional)' }, { key: 'designation', label: 'Designation' }, { key: 'primaryPhone', label: 'Mobile number 1' }, { key: 'otherPhones', label: 'Other mobile numbers' }, { key: 'email', label: 'Email' }, { key: 'website', label: 'Website' }, { key: 'socialPlatform', label: 'Social media platform' }, { key: 'socialProfile', label: 'Social media link or profile' }]
+const defaultCustomization: CustomizationPreferences = { accent: 'ember', density: 'comfortable' }
+const customizationThemes: { id: CustomizationPreferences['accent']; label: string; color: string; description: string }[] = [
+  { id: 'ember', label: 'Ember', color: '#ff6b28', description: 'Exhibity orange' },
+  { id: 'ocean', label: 'Ocean', color: '#527de0', description: 'Calm blue' },
+  { id: 'forest', label: 'Forest', color: '#378b69', description: 'Fresh green' },
+  { id: 'plum', label: 'Plum', color: '#8b63c7', description: 'Rich violet' },
+  { id: 'slate', label: 'Slate', color: '#53657d', description: 'Quiet neutral' },
+]
+const applyCustomization = (preferences: CustomizationPreferences) => {
+  document.documentElement.dataset.accent = preferences.accent
+  document.documentElement.dataset.density = preferences.density
+}
+
+export default function App() {
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' } | null>(null)
+  useEffect(() => { notify = (message, tone = 'success') => { setToast({ message, tone }); window.setTimeout(() => setToast(null), 3000) }; return () => { notify = () => undefined } }, [])
+  return <>{<AuthGate />}<div id="toast-root">{toast && <div className={`toast ${toast.tone}`}><CheckCircle2 size={17} />{toast.message}</div>}</div></>
+}
+
+function AuthGate() {
+  const session = useQuery({ queryKey: ['session'], queryFn: () => api<{ user: User }>('/auth/me'), retry: false })
+  if (session.isPending) return <div className="screen-loader"><LoaderCircle className="spin" size={24} /> Loading your workspace…</div>
+  if (session.data?.user) return <Routes><Route element={<Shell user={session.data.user} />}><Route index element={<Dashboard />} /><Route path="expos" element={<ExposPage />} /><Route path="expos/:expoId" element={<ExpoWorkspace />} /><Route path="leads" element={<LeadsPage />} /><Route path="leads/:leadId" element={<LeadDetails />} /><Route path="activity" element={<ActivityPage />} /><Route path="customization" element={<CustomizationPage />} /><Route path="*" element={<Navigate to="/" replace />} /></Route></Routes>
+  return <AuthPage />
+}
+
+function Shell({ user }: { user: User }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [mobileMenu, setMobileMenu] = useState(false)
+  const [profileMenu, setProfileMenu] = useState(false)
+  const preferences = useQuery({ queryKey: ['preferences'], queryFn: () => api<CustomizationPreferences>('/preferences') })
+  const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void>; userChoice?: Promise<{ outcome: string }> } | null>(null)
+  useEffect(() => { const handler = (event: Event) => { event.preventDefault(); setInstallPrompt(event as typeof installPrompt) }; window.addEventListener('beforeinstallprompt', handler); return () => window.removeEventListener('beforeinstallprompt', handler) }, [])
+  const logout = useMutation({ mutationFn: () => api('/auth/logout', { method: 'POST' }), onSuccess: () => { window.location.assign('/') } })
+  const activeExpo = location.pathname.match(/^\/expos\/([^/]+)/)?.[1]
+  useEffect(() => { applyCustomization(preferences.data || defaultCustomization) }, [preferences.data])
+  const mainNav = [{ to: '/', label: 'Overview', icon: LayoutDashboard }, { to: '/expos', label: 'Expos', icon: Building2 }, { to: '/leads', label: 'All leads', icon: Users }, { to: '/activity', label: 'Activity', icon: ActivityIcon }]
+  const install = async () => { if (!installPrompt?.prompt) { notify('In Chrome, use Install app from the address bar menu.'); return }; await installPrompt.prompt(); setInstallPrompt(null) }
+  return <div className="app-frame">
+    <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
+      <Link className="brand" to="/" onClick={() => setMobileMenu(false)}><span className="brand-mark"><Building2 size={19} /></span><span>Exhibity<small>LEAD WORKSPACE</small></span></Link>
+      <div className="workspace-label">WORKSPACE</div>
+      <nav className="side-nav">{mainNav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileMenu(false)} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Expos' && <span className="nav-count">›</span>}</NavLink>)}</nav>
+      {activeExpo && <div className="active-expo-nav"><div className="workspace-label">CURRENT EXPO</div><NavLink to={`/expos/${activeExpo}?tab=leads`} className="expo-nav-link"><span className="expo-nav-dot" />Workspace<ChevronRight size={15} /></NavLink></div>}
+      <div className="sidebar-spacer" />
+      <button className="install-prompt" onClick={() => void install()}><span className="install-icon"><ArrowDownToLine size={17} /></span><span><strong>Install the app</strong><small>One click from your desktop</small></span><ArrowUpRight size={15} /></button>
+      <div className="profile-card"><span className="avatar avatar-user">{initials(user.name)}</span><span className="profile-copy"><strong>{user.name}</strong><small>{user.email}</small></span><button className="icon-button quiet" title="Sign out" onClick={() => logout.mutate()}><LogOut size={17} /></button></div>
+    </aside>
+    {mobileMenu && <button className="sidebar-overlay" aria-label="Close menu" onClick={() => setMobileMenu(false)} />}
+    <main className="main-shell">
+      <header className="topbar"><div className="topbar-left"><div className="breadcrumbs"><span>Workspace</span><ChevronRight size={14} /><strong>{breadcrumb(location.pathname)}</strong></div></div><div className="topbar-actions"><button className="help-button" onClick={() => notify('Your expo workspace is ready to organize leads.')}><CircleHelp size={17} /><span>Help center</span></button><button className="icon-button notification-button" aria-label="Activity" onClick={() => navigate('/activity')}><Bell size={18} /><i /></button><div className="profile-menu-container"><button className="avatar avatar-top" onClick={() => setProfileMenu(!profileMenu)}>{initials(user.name)}</button>{profileMenu && <><div className="dropdown-overlay" onClick={() => setProfileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} /><div className="profile-dropdown"><div className="profile-dropdown-header"><strong>{user.name}</strong><small>{user.email}</small></div><button onClick={() => { setProfileMenu(false); navigate('/customization'); }}><Settings size={15} /> Customization</button><button onClick={() => { setProfileMenu(false); logout.mutate(); }} className="logout-button"><LogOut size={15} /> Logout</button></div></>}</div></div></header>
+      <div className="page-area"><Outlet context={{ user, install: () => void install() }} /></div>
+      <nav className="bottom-nav">{mainNav.slice(0, 4).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => isActive ? 'bottom-item active' : 'bottom-item'}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
+    </main>
+  </div>
+}
+
+function breadcrumb(path: string) { if (path === '/') return 'Overview'; if (path.startsWith('/expos/')) return 'Expo workspace'; if (path.startsWith('/expos')) return 'Expos'; if (path.startsWith('/leads/')) return 'Lead details'; if (path.startsWith('/leads')) return 'All leads'; if (path.startsWith('/activity')) return 'Activity'; if (path.startsWith('/customization')) return 'Customization'; return 'Workspace' }
+
+const googleAuthErrors = new Map<string, string>([
+  ['google_not_configured', 'Google sign-in setup is incomplete. Add the Google OAuth keys to Vercel.'],
+  ['google_cancelled', 'Google sign-in was cancelled.'],
+  ['google_state_invalid', 'This Google sign-in link expired. Please try again.'],
+  ['google_email_unverified', 'Google could not confirm this email address.'],
+  ['google_account_conflict', 'This Google account is already linked to a different account.'],
+  ['google_account_link_required', 'Sign in with your password first, then connect Google from Customization.'],
+  ['google_link_signin_required', 'Sign in to Exhibity before connecting a Google account.'],
+  ['google_link_email_mismatch', 'Choose the same Google email used for this Exhibity account.'],
+  ['google_failed', 'Google sign-in failed. Please try again.'],
+])
+
+function AuthPage() {
+  const [mode, setMode] = useState<'signup' | 'login'>('signup')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [searchParams] = useSearchParams()
+  const [error, setError] = useState(() => googleAuthErrors.get(searchParams.get('authError') || '') || '')
+  const client = useQueryClient()
+  const setup = mode === 'signup'
+  const mutation = useMutation({
+    mutationFn: () => api('/auth/' + (setup ? 'register' : 'login'), json('POST', setup ? { name, email, password } : { email, password })),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['session'] }) },
+    onError: (e: Error) => setError(e.message),
+  })
+  const submit = (e: FormEvent) => { e.preventDefault(); setError(''); mutation.mutate() }
+  const changeMode = (next: 'signup' | 'login') => { setMode(next); setError('') }
+
+  return <div className="auth-page">
+    <div className="auth-decoration">
+      <div className="auth-orbit one" /><div className="auth-orbit two" />
+      <div className="auth-brand"><img src="/expo-mark.svg" alt="" /><span>Exhibity</span></div>
+      <span className="auth-illustration"><img src="/expo-mark.svg" alt="Exhibity" /></span>
+      <div className="auth-quote"><span className="eyebrow">YOUR NEXT CONVERSATION STARTS HERE</span><h2>Turn every expo<br />into an opportunity.</h2><p>All your event leads, follow-ups and relationships in one calm workspace.</p><div className="auth-feature"><span><Check size={15} /></span>Built for the exhibition floor</div></div>
+    </div>
+    <section className="auth-form-wrap">
+      <div className="auth-mobile-brand"><span className="brand-mark"><Building2 size={19} /></span> Exhibity</div>
+      <div className="auth-form">
+        <span className="eyebrow">{setup ? 'CREATE ACCOUNT' : 'WELCOME BACK'}</span>
+        <h1>{setup ? 'Sign up for Exhibity' : 'Sign in to Exhibity'}</h1>
+        <p>{setup ? 'Create your private expo lead workspace.' : 'Pick up where you left off.'}</p>
+        <div className="auth-mode-tabs" role="tablist" aria-label="Account access">
+          <button type="button" role="tab" aria-selected={setup} className={setup ? 'selected' : ''} onClick={() => changeMode('signup')}>Sign up</button>
+          <button type="button" role="tab" aria-selected={!setup} className={!setup ? 'selected' : ''} onClick={() => changeMode('login')}>Log in</button>
+        </div>
+        <form onSubmit={submit}>
+          {setup && <label>Your name<input autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Krish Rami" /></label>}
+          <label>Email address<input autoComplete="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></label>
+          <label>Password<input autoComplete={setup ? 'new-password' : 'current-password'} type="password" minLength={setup ? 10 : 1} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder={setup ? 'At least 10 characters' : 'Your password'} /></label>
+          {error && <p className="form-error">{error}</p>}
+          <button className="button primary full" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle size={17} className="spin" /> : setup ? 'Create account' : 'Sign in'}<ArrowUpRight size={17} /></button>
+          <div className="auth-separator"><span>or continue with</span></div>
+          <a href="/api/auth/google/start" className="button secondary full google-btn"><svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A11 11 0 0 0 1 12c0 1.78.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/><path d="M1 1h22v22H1z" fill="none"/></svg>Continue with Google</a>
+        </form>
+        <p className="auth-note"><ShieldCheck size={15} /> Your data stays private to your workspace.</p>
+      </div>
+      <span className="auth-version">EXHIBITY · WEB APP</span>
+    </section>
+  </div>
+}
+function CustomizationPage() {
+  const { user } = useOutletContext<{ user: User }>()
+  const queryClient = useQueryClient()
+  const settings = useQuery({ queryKey: ['preferences'], queryFn: () => api<CustomizationPreferences>('/preferences') })
+  const save = useMutation({
+    mutationFn: (preferences: CustomizationPreferences) => api<CustomizationPreferences>('/preferences', json('PATCH', preferences)),
+    onSuccess: (preferences) => { queryClient.setQueryData(['preferences'], preferences); applyCustomization(preferences); notify('Appearance saved') },
+    onError: (error: Error) => { applyCustomization(settings.data || defaultCustomization); notify(error.message, 'error') },
+  })
+  const preferences = settings.data || defaultCustomization
+  const update = (next: CustomizationPreferences) => { applyCustomization(next); save.mutate(next) }
+  if (settings.isLoading) return <div className="page-content"><LoadingRows /></div>
+  if (settings.isError || !settings.data) return <div className="page-content"><ErrorPanel message="Could not load your appearance settings." /><button className="button secondary small" onClick={() => void settings.refetch()}>Try again</button></div>
+  return <div className="page-content customization-page">
+    <div className="page-title-row"><div><span className="eyebrow">YOUR WORKSPACE</span><h1>Make it yours</h1><p>Choose the look and spacing that feels right. These settings follow your account.</p></div><span className="customization-title-icon"><Sparkles size={20} /></span></div>
+    <div className="customization-grid">
+      <section className="panel customization-panel accent-panel">
+        <div className="section-heading"><div><span className="eyebrow">COLOR</span><h2>Accent color</h2></div><span className="customization-current-dot" style={{ backgroundColor: customizationThemes.find((theme) => theme.id === preferences.accent)?.color }} /></div>
+        <p className="customization-copy">Personalize buttons, active navigation and highlights.</p>
+        <div className="accent-options">{customizationThemes.map((theme) => <button key={theme.id} type="button" className={`accent-option ${preferences.accent === theme.id ? 'selected' : ''}`} aria-pressed={preferences.accent === theme.id} disabled={save.isPending} onClick={() => update({ ...preferences, accent: theme.id })}><span className="accent-swatch" style={{ backgroundColor: theme.color }}>{preferences.accent === theme.id && <Check size={15} />}</span><span><strong>{theme.label}</strong><small>{theme.description}</small></span><span className="accent-radio" /></button>)}</div>
+      </section>
+      <section className="panel customization-panel density-panel">
+        <div className="section-heading"><div><span className="eyebrow">LAYOUT</span><h2>Content spacing</h2></div></div>
+        <p className="customization-copy">Control how much fits on your screen.</p>
+        <div className="density-options"><button type="button" className={`density-option ${preferences.density === 'comfortable' ? 'selected' : ''}`} aria-pressed={preferences.density === 'comfortable'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'comfortable' })}><span className="density-preview comfortable-preview"><i /><i /><i /></span><strong>Comfortable</strong><small>More breathing room</small></button><button type="button" className={`density-option ${preferences.density === 'compact' ? 'selected' : ''}`} aria-pressed={preferences.density === 'compact'} disabled={save.isPending} onClick={() => update({ ...preferences, density: 'compact' })}><span className="density-preview compact-preview"><i /><i /><i /><i /></span><strong>Compact</strong><small>See more at once</small></button></div>
+      </section>
+      <section className="panel customization-panel account-panel">
+        <div className="section-heading"><div><span className="eyebrow">ACCOUNT</span><h2>Sign-in options</h2></div><ShieldCheck size={17} className="account-shield" /></div>
+        <p className="customization-copy">Manage how you access {user.email}.</p>
+        <div className="account-method-row"><span className={`account-method-icon ${user.googleConnected ? 'connected' : ''}`}><Building2 size={16} /></span><span><strong>Google sign-in</strong><small>{user.googleConnected ? 'Connected to this account' : 'Not connected yet'}</small></span>{user.googleConnected ? <span className="account-connected"><Check size={13} />Connected</span> : <a className="button secondary small account-connect" href="/api/auth/google/start?link=1">Connect</a>}</div>
+        <small className="account-method-note">To link Google to an existing account, sign in with the same email first.</small>
+      </section>
+      <section className="panel customization-preview-panel">
+        <div className="section-heading"><div><span className="eyebrow">PREVIEW</span><h2>Your workspace</h2></div><span className="preview-live"><i /> Live</span></div>
+        <div className="customization-preview"><div className="preview-sidebar"><span className="preview-logo"><Building2 size={14} /></span><span className="preview-nav active"><LayoutDashboard size={13} />Overview</span><span className="preview-nav"><Building2 size={13} />Expos</span><span className="preview-nav"><Users size={13} />All leads</span></div><div className="preview-main"><div className="preview-topline"><span /><span /></div><div className="preview-stat-row"><span /><span /><span /></div><button className="button primary small" type="button"><Plus size={13} />Add expo</button><div className="preview-row"><span /><span /><i /></div><div className="preview-row"><span /><span /><i /></div></div></div>
+      </section>
+    </div>
+    <div className="customization-footer"><span>{save.isPending ? <><LoaderCircle size={14} className="spin" /> Saving your appearance…</> : 'Your appearance is saved to your account.'}</span><button className="button secondary small" type="button" disabled={save.isPending || (preferences.accent === defaultCustomization.accent && preferences.density === defaultCustomization.density)} onClick={() => update(defaultCustomization)}>Reset to default</button></div>
+  </div>
+}
+
+function Dashboard() {
+  const { user } = useOutletContext<{ user: User }>()
+  const { data, isLoading, isError } = useQuery({ queryKey: ['dashboard'], queryFn: () => api<{ stats: Record<string, number>; expos: Expo[]; activities: ActivityItem[] }>('/dashboard') })
+  const navigate = useNavigate()
+  const [expoModal, setExpoModal] = useState(false)
+  const stats = data?.stats
+  return <div className="page-content dashboard-page"><div className="welcome-row"><div><span className="eyebrow">{format(new Date(), 'EEEE, MMMM d').toUpperCase()}</span><h1>{dateGreeting()}, {user.name.split(' ')[0]} <span className="wave">✳</span></h1><p>Here’s your expo activity at a glance.</p></div><button className="button primary" onClick={() => setExpoModal(true)}><Plus size={17} />Add expo</button></div>
+    {isError && <ErrorPanel message="Could not reach the workspace data. Check that the API and MongoDB are running." />}
+    <section className="stat-grid">{[
+      { label: 'Total expos', value: stats?.expoCount ?? '—', detail: 'Your events', icon: Building2, tone: 'orange' },
+      { label: 'Total leads', value: stats?.leadCount ?? '—', detail: 'Across all expos', icon: Users, tone: 'blue' },
+      { label: 'New inquiries', value: stats?.new ?? '—', detail: 'Fresh / uncontacted', icon: Sparkles, tone: 'orange' },
+      { label: 'Interested', value: stats?.interested ?? '—', detail: 'Ready to convert', icon: Zap, tone: 'green' },
+      { label: 'Called', value: stats?.called ?? '—', detail: 'Conversation started', icon: Phone, tone: 'violet' },
+      { label: 'Already represented', value: stats?.goodPresence ?? '—', detail: 'Existing presence', icon: CheckCircle2, tone: 'gray' },
+    ].map((stat) => <article className="stat-card" key={stat.label}><div className={`stat-icon ${stat.tone}`}><stat.icon size={18} /></div><div className="stat-heading"><span>{stat.label}</span><MoreHorizontal size={16} /></div><strong className="stat-value">{isLoading ? '…' : stat.value}</strong><span className="stat-detail"><i className={`detail-dot ${stat.tone}`} />{stat.detail}</span></article>)}</section>
+    <div className="dashboard-columns"><section className="panel recent-panel"><div className="section-heading"><div><span className="eyebrow">YOUR EVENTS</span><h2>Recent expos</h2></div><Link className="text-link" to="/expos">View all <ArrowUpRight size={15} /></Link></div>{isLoading ? <LoadingRows /> : data?.expos.length ? <div className="recent-expos">{data.expos.slice(0, 4).map((expo, index) => <ExpoRow key={expo._id} expo={expo} index={index} onClick={() => navigate(`/expos/${expo._id}?tab=overview`)} />)}</div> : <EmptyState icon={<Building2 size={22} />} title="Your first expo is waiting" text="Create an expo to start collecting and organizing leads." action={<button className="button primary small" onClick={() => setExpoModal(true)}><Plus size={15} />Create expo</button>} />}</section>
+      <section className="panel activity-panel"><div className="section-heading"><div><span className="eyebrow">THE LATEST</span><h2>Recent activity</h2></div><Link className="icon-link" to="/activity" aria-label="View all activity"><ArrowUpRight size={17} /></Link></div>{isLoading ? <LoadingRows /> : data?.activities.length ? <ActivityList items={data.activities.slice(0, 5)} /> : <div className="empty-mini"><span className="empty-icon"><ActivityIcon size={19} /></span><p>Activity will appear here as you work with your leads.</p></div>}</section></div>
+    <section className="quick-actions"><div><span className="eyebrow">KEEP THINGS MOVING</span><h2>Quick actions</h2></div><div className="quick-action-list"><button onClick={() => setExpoModal(true)}><span className="quick-icon orange"><Plus size={18} /></span><span><strong>Create an expo</strong><small>Set up a new event</small></span><ChevronRight size={17} /></button><Link to="/expos"><span className="quick-icon blue"><Upload size={18} /></span><span><strong>Import from Excel</strong><small>Bring your lead list along</small></span><ChevronRight size={17} /></Link><Link to="/leads"><span className="quick-icon green"><Users size={18} /></span><span><strong>Browse your leads</strong><small>Search across your contacts</small></span><ChevronRight size={17} /></Link></div></section>
+    <DashboardInsights stats={stats} />
+    {expoModal && <ExpoForm onClose={() => setExpoModal(false)} />}
+  </div>
+}
+
+function DashboardInsights({ stats }: { stats?: Record<string, number> }) {
+  const navigate = useNavigate()
+  const recentLeadsQuery = useQuery({
+    queryKey: ['recent-dashboard-leads'],
+    queryFn: () => api<Page<Lead>>('/leads?pageSize=4&sort=newest'),
+  })
+
+  const totalLeads = stats?.leadCount || 0
+  const newCount = stats?.new || 0
+  const interestedCount = stats?.interested || 0
+  const calledCount = stats?.called || 0
+  const otherCount = (stats?.notInterested || 0) + (stats?.goodPresence || 0)
+  const contactedTotal = calledCount + interestedCount + otherCount
+  const completionPercent = totalLeads ? Math.min(100, Math.round((contactedTotal / totalLeads) * 100)) : 0
+
+  return (
+    <section className="dashboard-insights-hub">
+      <div className="insights-header">
+        <div>
+          <span className="eyebrow">PRIORITY FOLLOW-UP & LEAD MOMENTUM</span>
+          <h2>Inquiry Command Center</h2>
+          <p>Quickly connect with your latest stall inquiries and track conversion progress.</p>
+        </div>
+        <Link to="/leads" className="button secondary small">
+          <Users size={15} /> View all leads ({totalLeads})
+        </Link>
+      </div>
+
+      <div className="insights-grid">
+        <div className="panel insights-leads-panel">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">DIRECT OUTREACH</span>
+              <h3>Recent Inquiries Ready for Action</h3>
+            </div>
+            <span className="mini-tag amber">{newCount} fresh</span>
+          </div>
+
+          {recentLeadsQuery.isLoading ? (
+            <LoadingRows />
+          ) : recentLeadsQuery.data?.items.length ? (
+            <div className="quick-outreach-list">
+              {recentLeadsQuery.data.items.slice(0, 4).map((lead) => {
+                const displayName = lead.personName || lead.companyName || 'Inquiry Contact'
+                return (
+                  <div className="outreach-item" key={lead._id}>
+                    <span className={`avatar outreach-avatar ${avatarTone(displayName)}`}>
+                      {initials(displayName)}
+                    </span>
+                    <div className="outreach-info">
+                      <strong onClick={() => navigate(`/leads/${lead._id}`)}>{displayName}</strong>
+                      <span>
+                        {lead.personName ? (lead.companyName || lead.businessCategory || 'Direct Contact') : (lead.businessCategory || 'Booth Visitor')}
+                        {typeof lead.expoId !== 'string' && lead.expoId?.name ? ` · ${lead.expoId.name}` : ''}
+                      </span>
+                    </div>
+                    <span className={`status-pill ${lead.status}`}>
+                      <span />{statusLabel(lead.status)}
+                    </span>
+                    <div className="outreach-actions">
+                      {lead.primaryPhone ? (
+                        <>
+                          <a href={`tel:${lead.primaryPhone}`} className="icon-action-btn phone" title={`Call ${displayName}`} aria-label="Call">
+                            <Phone size={14} />
+                          </a>
+                          <a href={lead.whatsappUrl || formatWhatsAppUrl(lead.primaryPhone)} target="_blank" rel="noreferrer" className="icon-action-btn whatsapp" title={`WhatsApp ${displayName}`} aria-label="WhatsApp">
+                            <Zap size={14} />
+                          </a>
+                        </>
+                      ) : (
+                        <button onClick={() => navigate(`/leads/${lead._id}`)} className="icon-action-btn view" title="View details" aria-label="View">
+                          <ChevronRight size={15} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="empty-mini">
+              <span className="empty-icon"><Users size={18} /></span>
+              <p>No leads added yet. Your latest inquiries with instant Call & WhatsApp actions will appear here.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="panel insights-stats-panel">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">PIPELINE VELOCITY</span>
+              <h3>Follow-up Progression</h3>
+            </div>
+            <span className="velocity-percent">{completionPercent}% engaged</span>
+          </div>
+
+          <div className="velocity-progress-wrap">
+            <div className="velocity-bar-track">
+              <div className="velocity-segment new" style={{ width: `${totalLeads ? (newCount / totalLeads) * 100 : 0}%` }} title="New Inquiries" />
+              <div className="velocity-segment interested" style={{ width: `${totalLeads ? (interestedCount / totalLeads) * 100 : 0}%` }} title="Interested" />
+              <div className="velocity-segment called" style={{ width: `${totalLeads ? (calledCount / totalLeads) * 100 : 0}%` }} title="Called" />
+              <div className="velocity-segment other" style={{ width: `${totalLeads ? (otherCount / totalLeads) * 100 : 0}%` }} title="Other statuses" />
+            </div>
+            <div className="velocity-legend">
+              <div><i className="dot new" /><span>New ({newCount})</span></div>
+              <div><i className="dot interested" /><span>Interested ({interestedCount})</span></div>
+              <div><i className="dot called" /><span>Called ({calledCount})</span></div>
+              <div><i className="dot other" /><span>Closed ({otherCount})</span></div>
+            </div>
+          </div>
+
+          <div className="expo-pro-tip-box">
+            <div className="pro-tip-badge"><Sparkles size={14} /> Pro Follow-Up Tip</div>
+            <p><strong>The 48-Hour Response Rule:</strong> Following up within 48 hours of meeting at the stall increases deal conversion by over 70% while your pitch is top of mind.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+type ActivityItem = { _id: string; description: string; action: string; createdAt: string; expoId?: { name: string } }
+function ActivityList({ items }: { items: ActivityItem[] }) { return <div className="activity-list">{items.map((item) => <div className="activity-row" key={item._id}><span className="activity-marker"><ActivityIcon size={14} /></span><div className="activity-row-main"><p>{item.description}</p><small>{item.expoId?.name ? `${item.expoId.name} · ` : ''}{safeDate(item.createdAt, 'MMM d · h:mm a')}</small></div></div>)}</div> }
+function ExpoLogo({ website, name, variant = 'card' }: { website?: string; name: string; variant?: 'compact' | 'card' | 'workspace' }) {
+  const source = expoLogoUrl(website)
+  const [failedSource, setFailedSource] = useState('')
+  return <span className={`expo-logo-mark ${variant}`} role="img" aria-label={`${name} website logo`}>
+    {source && failedSource !== source ? <img src={source} alt="" loading={variant === 'compact' ? 'lazy' : 'eager'} referrerPolicy="no-referrer" onError={() => setFailedSource(source)} /> : <Building2 size={variant === 'compact' ? 18 : 28} />}
+  </span>
+}
+function ExpoRow({ expo, index, onClick }: { expo: Expo; index: number; onClick: () => void }) { return <button className="expo-row" onClick={onClick}><span className={`expo-cover cover-${index % 4}`}><ExpoLogo website={expo.website} name={expo.name} variant="compact" /></span><span className="expo-row-main"><strong>{expo.name}</strong><small><CalendarDays size={13} />{safeDate(expo.startDate)}{expo.city ? <><span className="middot">·</span>{expo.city}</> : null}</small></span><span className="expo-row-stat"><strong>{expo.leadCount ?? 0}</strong><small>leads</small></span><ChevronRight className="row-chevron" size={17} /></button> }
+
+function ExposPage() {
+  const [search, setSearch] = useState('')
+  const [modal, setModal] = useState(false)
+  const [editing, setEditing] = useState<Expo | null>(null)
+  const [searchParams] = useSearchParams()
+  const requestedNew = searchParams.get('new') === '1'
+  useEffect(() => { if (requestedNew) setModal(true) }, [requestedNew])
+  const query = useQuery({ queryKey: ['expos', search], queryFn: () => api<Expo[]>(`/expos?${queryString({ search })}`) })
+  return <div className="page-content"><div className="page-title-row"><div><span className="eyebrow">EVENT LIBRARY</span><h1>Your expos</h1><p>Every event, and every conversation that came with it.</p></div><button className="button primary" onClick={() => { setEditing(null); setModal(true) }}><Plus size={17} />Add expo</button></div><div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder="Search expos, venues, cities…" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span className="result-count">{query.data?.length ?? 0} events</span></div>{query.isLoading ? <LoadingRows /> : query.isError ? <ErrorPanel message="Could not load expos." /> : query.data?.length ? <div className="expo-grid">{query.data.map((expo, index) => <ExpoCard key={expo._id} expo={expo} index={index} onEdit={() => { setEditing(expo); setModal(true) }} />)}</div> : <EmptyState icon={<Building2 size={24} />} title={search ? 'No expos found' : 'Start with your first expo'} text={search ? 'Try another name or city.' : 'Create an event workspace, then add leads manually or import a spreadsheet.'} action={!search && <button className="button primary" onClick={() => setModal(true)}><Plus size={16} />Add your first expo</button>} />}{modal && <ExpoForm initial={editing || undefined} onClose={() => { setModal(false); setEditing(null) }} />}</div>
+}
+function ExpoCard({ expo, index, onEdit }: { expo: Expo; index: number; onEdit: () => void }) {
+  const navigate = useNavigate()
+  const notifyUser = useNotify()
+  const qc = useQueryClient()
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const del = useMutation({
+    mutationFn: () => api(`/expos/${expo._id}`, { method: 'DELETE' }),
+    onSuccess: () => { setConfirmDelete(false); notifyUser('Expo and its leads deleted'); void qc.invalidateQueries() },
+    onError: (e: Error) => notifyUser(e.message, 'error'),
+  })
+  const resetAll = useMutation({
+    mutationFn: () => api<{ updated: number }>(`/expos/${expo._id}/reset-status`, json('POST', { status: 'new' })),
+    onSuccess: (data) => {
+      setConfirmReset(false)
+      notifyUser(`All ${data.updated} leads in ${expo.name} set to New Inquiry`)
+      void qc.invalidateQueries()
+    },
+    onError: (e: Error) => notifyUser(e.message, 'error'),
+  })
+  return <>
+    <article className="expo-card">
+      <button className={`expo-art art-${index % 5}`} aria-label={`Open ${expo.name}`} onClick={() => navigate(`/expos/${expo._id}?tab=overview`)}>
+        <ExpoLogo website={expo.website} name={expo.name} />
+        <span className="art-index">0{index + 1}</span>
+      </button>
+      <div className="expo-card-content">
+        <div className="expo-card-heading">
+          <button className="expo-title-button" onClick={() => navigate(`/expos/${expo._id}?tab=overview`)}><h3>{expo.name}</h3></button>
+          <div className="expo-card-actions">
+            <button className="icon-button quiet reset-icon" title={`Set all leads in ${expo.name} to New Inquiry`} aria-label={`Set all leads in ${expo.name} to New Inquiry`} onClick={() => setConfirmReset(true)}><RotateCcw size={14} /></button>
+            <button className="icon-button quiet" title={`Edit ${expo.name}`} aria-label={`Edit ${expo.name}`} onClick={onEdit}><Pencil size={15} /></button>
+            <button className="icon-button quiet delete-icon" title={`Delete ${expo.name}`} aria-label={`Delete ${expo.name}`} onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button>
+          </div>
+        </div>
+        <p className="expo-card-meta"><CalendarDays size={14} />{safeDate(expo.startDate)}{expo.city && <><span className="middot">·</span><MapPin size={14} />{expo.city}</>}</p>
+        <div className="expo-card-footer"><div><strong>{expo.leadCount ?? 0}</strong><span>leads</span></div><div className="mini-status"><i className="detail-dot green" />{expo.interested ?? 0} interested</div></div>
+      </div>
+    </article>
+    {confirmDelete && <ConfirmModal title="Delete this expo?" text={`This will permanently remove ${expo.name} and all of its leads.`} confirm="Delete expo" onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate()} busy={del.isPending} />}
+    {confirmReset && <ConfirmModal title="Set all to New Inquiry?" text={`Are you sure you want to change the follow-up status of all ${expo.leadCount ?? 0} leads in “${expo.name}” to “New Inquiry”?`} confirm="Yes, set all to New Inquiry" onCancel={() => setConfirmReset(false)} onConfirm={() => resetAll.mutate()} busy={resetAll.isPending} />}
+  </>
+}
+function ExpoWorkspace() {
+  const { expoId = '' } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tab = searchParams.get('tab') || 'overview'
+  const setTab = (value: string) => setSearchParams({ tab: value }, { replace: true })
+  const query = useQuery({ queryKey: ['expo', expoId], queryFn: () => api<Expo>(`/expos/${expoId}`), enabled: Boolean(expoId) })
+  const [expoModal, setExpoModal] = useState(false)
+  const [leadModal, setLeadModal] = useState(false)
+  const [upload, setUpload] = useState(false)
+  const [exportModal, setExportModal] = useState(false)
+  const [resetConfirm, setResetConfirm] = useState(false)
+  const qc = useQueryClient(); const notifyUser = useNotify(); const navigate = useNavigate()
+  const del = useMutation({ mutationFn: () => api(`/expos/${expoId}`, { method: 'DELETE' }), onSuccess: () => { notifyUser('Expo deleted'); void qc.invalidateQueries(); navigate('/expos') }, onError: (e: Error) => notifyUser(e.message, 'error') })
+  const resetAll = useMutation({
+    mutationFn: () => api<{ updated: number }>(`/expos/${expoId}/reset-status`, json('POST', { status: 'new' })),
+    onSuccess: (data) => {
+      notifyUser(`All ${data.updated} leads set to New Inquiry`)
+      setResetConfirm(false)
+      void qc.invalidateQueries()
+    },
+    onError: (e: Error) => notifyUser(e.message, 'error'),
+  })
+  const expo = query.data
+  if (query.isLoading) return <div className="page-content"><LoadingRows /></div>
+  if (query.isError || !expo) return <div className="page-content"><ErrorPanel message="This expo could not be found." /><Link to="/expos" className="text-link"><ArrowLeft size={16} />Back to expos</Link></div>
+  return <div className="page-content expo-workspace"><button className="back-link" onClick={() => navigate('/expos')}><ArrowLeft size={16} />All expos</button><div className="expo-workspace-head"><div className="expo-workspace-art"><ExpoLogo website={expo.website} name={expo.name} variant="workspace" /></div><div className="expo-workspace-copy"><div className="title-with-menu"><div><span className="eyebrow">YOUR EVENT</span><h1>{expo.name}</h1></div><button className="icon-button" title="Expo actions" onClick={() => setExpoModal(true)}><MoreHorizontal size={20} /></button></div><div className="expo-meta-line">{expo.startDate && <span><CalendarDays size={15} />{safeDate(expo.startDate)}{expo.endDate ? ` – ${safeDate(expo.endDate)}` : ''}</span>}{(expo.venue || expo.city) && <span><MapPin size={15} />{[expo.venue, expo.city].filter(Boolean).join(', ')}</span>}</div><div className="expo-actions"><button className="button primary small" onClick={() => setLeadModal(true)}><Plus size={15} />Add lead</button><button className="button secondary small" onClick={() => setUpload(true)}><Upload size={15} />Import Excel</button><button className="button secondary small" onClick={() => setExportModal(true)}><Download size={15} />Export</button><button className="button secondary small reset-status-btn" title="Set all leads in this event to New Inquiry" onClick={() => setResetConfirm(true)}><RotateCcw size={14} />Set all to New Inquiry</button></div></div></div>
+    <div className="workspace-stats">{[{ label: 'Total leads', value: expo.leadCount ?? 0, tone: 'blue', icon: Users }, { label: 'Interested', value: expo.interested ?? 0, tone: 'green', icon: Zap }, { label: 'Other statuses', value: Math.max(0, (expo.leadCount ?? 0) - (expo.interested ?? 0)), tone: 'orange', icon: Tags }].map((item) => <div key={item.label}><span className={`stat-icon ${item.tone}`}><item.icon size={17} /></span><span><strong>{item.value}</strong><small>{item.label}</small></span></div>)}</div>
+    <div className="tabs-line">{[['overview', 'Overview'], ['leads', 'Leads'], ['analytics', 'Analytics'], ['details', 'Details']].map(([key, label]) => <button key={key} className={tab === key ? 'tab-button active' : 'tab-button'} onClick={() => setTab(key)}>{label}{key === 'leads' && <span>{expo.leadCount ?? 0}</span>}</button>)}</div>
+    {tab === 'leads' ? <ExpoLeads expo={expo} onAdd={() => setLeadModal(true)} onImport={() => setUpload(true)} onExport={() => setExportModal(true)} onResetAll={() => setResetConfirm(true)} /> : tab === 'analytics' ? <AnalyticsPanel expoId={expoId} /> : tab === 'details' ? <ExpoDetails expo={expo} onEdit={() => setExpoModal(true)} onDelete={() => { if (window.confirm(`Delete “${expo.name}” and all its leads? This cannot be undone.`)) del.mutate() }} /> : <ExpoOverview expo={expo} onTab={setTab} onAdd={() => setLeadModal(true)} />}
+    {expoModal && <ExpoForm initial={expo} onClose={() => setExpoModal(false)} />}{leadModal && <LeadForm expoId={expoId} onClose={() => setLeadModal(false)} />}{upload && <ImportModal expoId={expoId} expoName={expo.name} onClose={() => setUpload(false)} />}{exportModal && <ExportModal expoId={expoId} expoName={expo.name} onClose={() => setExportModal(false)} />}
+    {resetConfirm && <ConfirmModal title="Set all to New Inquiry?" text={`Are you sure you want to change the follow-up status of all ${expo.leadCount ?? 0} leads in “${expo.name}” to “New Inquiry”?`} confirm="Yes, set all to New Inquiry" onCancel={() => setResetConfirm(false)} onConfirm={() => resetAll.mutate()} busy={resetAll.isPending} />}
+  </div>
+}
+
+function ExpoOverview({ expo, onTab, onAdd }: { expo: Expo; onTab: (tab: string) => void; onAdd: () => void }) {
+  const leads = useQuery({ queryKey: ['leads', expo._id, 'overview'], queryFn: () => api<Page<Lead>>(`/expos/${expo._id}/leads?pageSize=5&sort=newest`) })
+  const chart = useQuery({ queryKey: ['analytics', expo._id], queryFn: () => api<Analytics>(`/expos/${expo._id}/analytics`) })
+  return <div className="workspace-overview"><div className="overview-main"><section className="panel"><div className="section-heading"><div><span className="eyebrow">RECENTLY ADDED</span><h2>Latest leads</h2></div><button className="text-link" onClick={() => onTab('leads')}>See all <ArrowUpRight size={15} /></button></div>{leads.isLoading ? <LoadingRows /> : leads.data?.items.length ? <LeadList leads={leads.data.items} compact /> : <EmptyState icon={<Users size={20} />} title="No leads yet" text="Add a lead or import your spreadsheet." action={<button className="button primary small" onClick={onAdd}><Plus size={15} />Add lead</button>} />}</section><section className="panel overview-chart"><div className="section-heading"><div><span className="eyebrow">LEAD ACTIVITY</span><h2>Leads over time</h2></div><button className="icon-link" onClick={() => onTab('analytics')}><ArrowUpRight size={16} /></button></div>{chart.data?.trend.length ? <TrendChart data={chart.data.trend} /> : <div className="chart-empty">Lead activity appears here after the first import.</div>}</section></div><aside className="overview-aside"><section className="panel status-summary"><div className="section-heading"><div><span className="eyebrow">FOLLOW-UP STATUS</span><h2>Lead pipeline</h2></div></div><StatusSummary statuses={chart.data?.statuses || []} total={expo.leadCount || 0} /></section><section className="panel notes-panel"><span className="eyebrow">ABOUT THIS EXPO</span><h2>Event notes</h2><p>{expo.description || expo.notes || 'Add a short description or a note to remember the important details about this event.'}</p><button className="text-link" onClick={() => onTab('details')}>Edit event details <ArrowUpRight size={14} /></button></section></aside></div>
+}
+
+function ExpoDetails({ expo, onEdit, onDelete }: { expo: Expo; onEdit: () => void; onDelete: () => void }) { return <div className="detail-layout"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">EVENT INFORMATION</span><h2>Expo details</h2></div><button className="button secondary small" onClick={onEdit}><Pencil size={15} />Edit</button></div><div className="detail-grid">{[['Start date', safeDate(expo.startDate)], ['End date', safeDate(expo.endDate)], ['Venue', expo.venue || 'Not added'], ['City', expo.city || 'Not added'], ['Organizer', expo.organizer || 'Not added'], ['Website', expo.website || 'Not added']].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="detail-description"><span>Description and notes</span><p>{expo.description || expo.notes || 'No notes added for this event.'}</p></div><div className="danger-zone"><div><strong>Delete this expo</strong><p>This permanently deletes the expo and all of its leads.</p></div><button className="button danger small" onClick={onDelete}><Trash2 size={15} />Delete expo</button></div></section></div> }
+
+function ExpoLeads({ expo, onAdd, onImport, onExport, onResetAll }: { expo: Expo; onAdd: () => void; onImport: () => void; onExport: () => void; onResetAll?: () => void }) {
+  const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [category, setCategory] = useState(''); const [city, setCity] = useState(''); const [source, setSource] = useState(''); const [page, setPage] = useState(1); const [sort, setSort] = useState('newest'); const [selected, setSelected] = useState<string[]>([])
+  const params = queryString({ search, status, category, city, source, page, pageSize: 20, sort })
+  const leads = useQuery({ queryKey: ['leads', expo._id, params], queryFn: () => api<Page<Lead>>(`/expos/${expo._id}/leads?${params}`) })
+  const filters = useQuery({ queryKey: ['lead-filter-options', expo._id], queryFn: () => api<{ categories: string[]; cities: string[]; sources: string[] }>(`/expos/${expo._id}/filters`) })
+  const unique = (field: 'businessCategory' | 'city' | 'source') => field === 'businessCategory' ? filters.data?.categories || [] : field === 'city' ? filters.data?.cities || [] : filters.data?.sources || []
+  const qc = useQueryClient(); const notifyUser = useNotify()
+  const bulk = useMutation({ mutationFn: (next: Status) => api<{ updated: number }>('/leads/bulk-status', json('POST', { ids: selected, status: next })), onSuccess: (result) => { notifyUser(`${result.updated} leads updated`); setSelected([]); void qc.invalidateQueries() }, onError: (e: Error) => notifyUser(e.message, 'error') })
+  const selectAll = () => setSelected(selected.length === (leads.data?.items.length || 0) ? [] : (leads.data?.items || []).map((lead) => lead._id))
+  return <div className="leads-workspace"><div className="lead-tools"><label className="search-box lead-search"><Search size={17} /><input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} placeholder="Search names, companies, phone, email…" /></label><button className="button primary small" onClick={onAdd}><Plus size={16} />Add lead</button><button className="button secondary small" onClick={onImport}><Upload size={15} /><span className="hide-small">Import</span></button><button className="button secondary small" onClick={onExport}><Download size={15} /><span className="hide-small">Export</span></button>{onResetAll && <button className="button secondary small reset-status-btn" title="Set all leads in this event to New Inquiry" onClick={onResetAll}><RotateCcw size={14} /><span className="hide-small">Set all to New</span></button>}</div>
+    <div className="lead-filter-row"><div className="status-filters"><button className={status === '' ? 'status-filter selected' : 'status-filter'} onClick={() => { setStatus(''); setPage(1) }}>All leads <span>{expo.leadCount ?? 0}</span></button>{statuses.map((item) => <button key={item.value} className={`status-filter ${item.value} ${status === item.value ? 'selected' : ''}`} onClick={() => { setStatus(status === item.value ? '' : item.value); setPage(1) }}>{item.label}</button>)}</div><div className="filter-selects"><select value={category} onChange={(e) => { setCategory(e.target.value); setPage(1) }} aria-label="Filter category"><option value="">All categories</option>{unique('businessCategory').map((value) => <option key={value}>{value}</option>)}</select><select value={city} onChange={(e) => { setCity(e.target.value); setPage(1) }} aria-label="Filter city"><option value="">All cities</option>{unique('city').map((value) => <option key={value}>{value}</option>)}</select><select value={source} onChange={(e) => { setSource(e.target.value); setPage(1) }} aria-label="Filter source"><option value="">All sources</option>{unique('source').map((value) => <option key={value}>{value}</option>)}</select><select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1) }} aria-label="Sort leads"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option></select></div></div>
+    {selected.length > 0 && <div className="bulk-bar"><span><CheckCircle2 size={16} />{selected.length} selected</span><select defaultValue="" onChange={(e) => { if (e.target.value) bulk.mutate(e.target.value as Status) }}><option value="" disabled>Change status…</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button className="text-link" onClick={() => void exportLeads(expo._id, expo.name, undefined, selected, notifyUser)}>Export selected</button><button className="icon-button quiet" onClick={() => setSelected([])} aria-label="Clear selection"><X size={17} /></button></div>}
+    <div className="lead-list-head"><label className="select-all"><input type="checkbox" checked={Boolean(leads.data?.items.length && selected.length === leads.data.items.length)} onChange={selectAll} />Lead contact</label><span>STATUS</span><span>VISIT DATE</span><span /></div>
+    {leads.isLoading ? <LoadingRows /> : leads.isError ? <ErrorPanel message="Could not load this expo’s leads." /> : leads.data?.items.length ? <LeadList leads={leads.data.items} selected={selected} onSelect={(id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} /> : <EmptyState icon={<Users size={21} />} title={search || status ? 'No matching leads' : 'No leads in this expo yet'} text={search || status ? 'Adjust your search or filters and try again.' : 'Import an Excel sheet or add your first lead manually.'} action={!search && !status && <><button className="button primary small" onClick={onAdd}><Plus size={15} />Add lead</button><button className="button secondary small" onClick={onImport}><Upload size={15} />Import Excel</button></>} />}
+    {Boolean((leads.data?.pages || 0) > 1) && <div className="pagination"><span>{(page - 1) * 20 + 1}–{Math.min(page * 20, leads.data?.total || 0)} of {leads.data?.total}</span><button className="icon-button" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><span className="page-current">{page}</span><button className="icon-button" disabled={page >= (leads.data?.pages || 1)} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div>}
+  </div>
+}
+
+function LeadsPage() {
+  const [search, setSearch] = useState(''); const [status, setStatus] = useState(''); const [page, setPage] = useState(1)
+  const data = useQuery({ queryKey: ['all-leads', search, status, page], queryFn: () => api<Page<Lead>>(`/leads?${queryString({ search, status, page, pageSize: 25 })}`) })
+  return <div className="page-content"><div className="page-title-row"><div><span className="eyebrow">YOUR CONTACTS</span><h1>All leads</h1><p>Search across every expo and keep the next step in view.</p></div></div><div className="toolbar"><label className="search-box"><Search size={17} /><input placeholder="Search name, company, phone, email…" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select className="select-control" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}><option value="">Every status</option>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><span className="result-count">{data.data?.total ?? 0} contacts</span></div>{data.isLoading ? <LoadingRows /> : data.data?.items.length ? <><LeadList leads={data.data.items} showExpo />{(data.data.pages > 1) && <div className="pagination"><span>Page {page} of {data.data.pages}</span><button className="icon-button" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><button className="icon-button" disabled={page >= data.data.pages} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div>}</> : <EmptyState icon={<Users size={21} />} title={search ? 'No leads found' : 'Your lead book is empty'} text={search ? 'Try a different search.' : 'Add leads from an expo workspace or import an Excel list.'} action={<Link className="button secondary small" to="/expos"><Building2 size={15} />Open an expo</Link>} />}</div>
+}
+
+function formatWhatsAppUrl(rawPhone?: string): string {
+  if (!rawPhone) return ''
+  let digits = rawPhone.replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.length === 10) digits = `91${digits}`
+  else if (digits.length === 11 && digits.startsWith('0')) digits = `91${digits.slice(1)}`
+  return `https://wa.me/${digits}`
+}
+
+function formatDisplayPhone(rawPhone?: string): string {
+  if (!rawPhone) return ''
+  const trimmed = rawPhone.trim()
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2)
+  if (digits.length === 11 && digits.startsWith('0')) return digits.slice(1)
+  return trimmed.replace(/^\+91[\s-]*/, '')
+}
+
+function MultiValueViewer({ values, type = 'text', label }: { values: string[]; type?: 'email' | 'phone' | 'text'; label?: string }) {
+  const [open, setOpen] = useState(false)
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+  const containerRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  const cleanValues = values.map((v) => (v || '').trim()).filter(Boolean)
+  if (!cleanValues.length) return null
+
+  const first = cleanValues[0]
+  const extras = cleanValues.slice(1)
+
+  const copyToClipboard = (text: string, index: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedIndex(index)
+      setTimeout(() => setCopiedIndex(null), 1800)
+    }).catch(() => undefined)
+  }
+
+  const renderLink = (val: string) => {
+    if (type === 'email') return <a href={`mailto:${val}`} onClick={(e) => e.stopPropagation()}>{val}</a>
+    if (type === 'phone') return <a href={`tel:${val}`} onClick={(e) => e.stopPropagation()}>{formatDisplayPhone(val)}</a>
+    return <span>{val}</span>
+  }
+
+  return (
+    <span className="multi-value-viewer" ref={containerRef} onClick={(e) => e.stopPropagation()}>
+      <span className="primary-value">{renderLink(first)}</span>
+      {extras.length > 0 && (
+        <button
+          type="button"
+          className={`multi-value-badge ${open ? 'active' : ''}`}
+          title={`Click to view all ${cleanValues.length} ${label || (type === 'email' ? 'emails' : 'values')}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            setOpen(!open)
+          }}
+        >
+          +{extras.length} others
+        </button>
+      )}
+      {open && (
+        <div className="multi-value-dropdown" onClick={(e) => e.stopPropagation()}>
+          <div className="dropdown-head">
+            <strong>All {label || (type === 'email' ? 'Emails' : type === 'phone' ? 'Phone Numbers' : 'Values')} ({cleanValues.length})</strong>
+            <button type="button" className="close-dropdown-btn" onClick={() => setOpen(false)} aria-label="Close">
+              <X size={13} />
+            </button>
+          </div>
+          <div className="dropdown-items">
+            {cleanValues.map((val, idx) => (
+              <div key={val + idx} className="dropdown-item">
+                <span className="item-index">{idx === 0 ? 'Primary' : `#${idx + 1}`}</span>
+                <span className="item-text">{renderLink(val)}</span>
+                <button
+                  type="button"
+                  className="copy-btn"
+                  title="Copy to clipboard"
+                  onClick={(e) => copyToClipboard(val, idx, e)}
+                >
+                  {copiedIndex === idx ? <Check size={12} className="green" /> : <Copy size={12} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
+function LeadList({ leads, compact = false, showExpo = false, selected = [], onSelect }: { leads: Lead[]; compact?: boolean; showExpo?: boolean; selected?: string[]; onSelect?: (id: string) => void }) {
+  const navigate = useNavigate()
+  const qc = useQueryClient(); const notifyUser = useNotify()
+  const statusMutation = useMutation({ mutationFn: ({ id, status }: { id: string; status: Status }) => api(`/leads/${id}/status`, json('PATCH', { status })), onSuccess: () => { notifyUser('Status updated'); void qc.invalidateQueries() }, onError: (e: Error) => notifyUser(e.message, 'error') })
+  return <div className={`lead-list ${compact ? 'compact' : ''}`}>{leads.map((lead) => {
+    const displayName = lead.personName || lead.companyName || 'Unnamed lead'
+    const allPhones = [lead.primaryPhone, ...(lead.otherPhones || [])].filter(Boolean) as string[]
+    const allEmails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean) as string[]
+    return <article className="lead-row" key={lead._id}>
+      <div className="lead-person-cell">
+        {onSelect && <input aria-label={`Select ${displayName}`} type="checkbox" checked={selected.includes(lead._id)} onChange={() => onSelect(lead._id)} />}
+        {!compact && <span className={`avatar lead-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span>}
+        <button className="lead-person-copy" onClick={() => navigate(`/leads/${lead._id}`)}>
+          <strong>{displayName}</strong>
+          <span>{lead.personName ? (lead.companyName || 'Independent contact') : (lead.businessCategory || 'Company')}{lead.personName && lead.businessCategory ? ` · ${lead.businessCategory}` : ''}</span>
+          <div className="lead-contact-line">
+            {allPhones.length > 0 && <span className="contact-chip phone-chip"><Phone size={12} /><MultiValueViewer values={allPhones.map(formatDisplayPhone)} type="phone" label="phones" /></span>}
+            {allEmails.length > 0 && <span className="contact-chip email-chip"><Mail size={12} /><MultiValueViewer values={allEmails} type="email" label="emails" /></span>}
+          </div>
+          {showExpo && typeof lead.expoId !== 'string' && <small className="lead-expo-name"><Building2 size={12} />{lead.expoId.name}</small>}
+        </button>
+      </div>
+      <div className="lead-status-cell"><StatusPill status={lead.status} onChange={(next) => statusMutation.mutate({ id: lead._id, status: next })} /></div>
+      <div className="lead-date-cell">{safeDate(lead.visitDate || lead.createdAt)}</div>
+      <div className="lead-row-actions"><button className="icon-button quiet" title="View lead" onClick={() => navigate(`/leads/${lead._id}`)}><ChevronRight size={17} /></button></div>
+    </article>
+  })}</div>
+}
+function avatarTone(name: string) { const tones = ['mint', 'peach', 'lavender', 'blue', 'sand']; return tones[(name.charCodeAt(0) || 0) % tones.length] }
+function StatusPill({ status, onChange }: { status: Status; onChange: (status: Status) => void }) { return <label className={`status-pill ${status}`}><span />{statusLabel(status)}<ChevronDown size={12} /><select aria-label="Change lead status" value={status} onChange={(e) => onChange(e.target.value as Status)}>{statuses.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label> }
+
+function LeadDetails() {
+  const { leadId = '' } = useParams(); const navigate = useNavigate(); const [edit, setEdit] = useState(false); const [confirmDelete, setConfirmDelete] = useState(false)
+  const query = useQuery({ queryKey: ['lead', leadId], queryFn: () => api<Lead>(`/leads/${leadId}`), enabled: Boolean(leadId) })
+  const qc = useQueryClient(); const notifyUser = useNotify()
+  const del = useMutation({ mutationFn: () => api(`/leads/${leadId}`, { method: 'DELETE' }), onSuccess: () => { notifyUser('Lead deleted'); void qc.invalidateQueries(); navigate(-1) }, onError: (e: Error) => notifyUser(e.message, 'error') })
+  if (query.isLoading) return <div className="page-content"><LoadingRows /></div>
+  if (query.isError || !query.data) return <div className="page-content"><ErrorPanel message="Lead not found." /><button className="back-link" onClick={() => navigate(-1)}><ArrowLeft size={16} />Go back</button></div>
+  const lead = query.data; const expo = typeof lead.expoId === 'string' ? null : lead.expoId; const displayName = lead.personName || lead.companyName || 'Unnamed lead'
+  const allPhones = [lead.primaryPhone, ...(lead.otherPhones || [])].filter(Boolean) as string[]
+  const allEmails = [lead.email, ...(lead.otherEmails || [])].filter(Boolean) as string[]
+  return <div className="page-content lead-details-page"><button className="back-link" onClick={() => navigate(expo ? `/expos/${expo._id}?tab=leads` : '/leads')}><ArrowLeft size={16} />{expo?.name || 'All leads'}</button><div className="lead-detail-head"><span className={`avatar detail-avatar ${avatarTone(displayName)}`}>{initials(displayName)}</span><div><span className="eyebrow">LEAD PROFILE</span><h1>{displayName}</h1><p>{lead.personName && lead.companyName ? lead.companyName : (lead.businessCategory || lead.designation || 'Company contact')}{lead.designation && lead.personName ? ` · ${lead.designation}` : ''}</p></div><StatusPill status={lead.status} onChange={(status) => api(`/leads/${lead._id}/status`, json('PATCH', { status })).then(() => { notifyUser('Status updated'); void qc.invalidateQueries() }).catch((e: Error) => notifyUser(e.message, 'error'))} /></div>
+    <div className="lead-detail-actions">{allPhones.length > 0 && <a className="button soft-green" href={`tel:${allPhones[0]}`}><Phone size={16} />Call</a>}{allPhones.length > 0 && <a className="button soft-green" href={lead.whatsappUrl || formatWhatsAppUrl(allPhones[0])} target="_blank" rel="noreferrer"><Zap size={16} />WhatsApp</a>}{allEmails.length > 0 && <a className="button soft-blue" href={`mailto:${allEmails[0]}`}><Mail size={16} />Email {allEmails.length > 1 ? `(${allEmails.length})` : ''}</a>}<button className="button secondary" onClick={() => setEdit(true)}><Pencil size={16} />Edit details</button><button className="icon-button" title="Delete lead" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /></button></div>
+    <div className="lead-detail-grid"><section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">CONTACT</span><h2>How to reach them</h2></div></div><ContactRow icon={<Phone size={17} />} label="Mobile number(s)" value={formatDisplayPhone(allPhones[0]) || 'Not added'} extraValues={allPhones.length > 1 ? allPhones.map(formatDisplayPhone) : undefined} type="phone" href={allPhones[0] ? `tel:${allPhones[0]}` : undefined} /><ContactRow icon={<Mail size={17} />} label="Email address" value={allEmails[0] || 'Not added'} extraValues={allEmails.length > 1 ? allEmails : undefined} type="email" href={allEmails[0] ? `mailto:${allEmails[0]}` : undefined} /><ContactRow icon={<Globe2 size={17} />} label="Website" value={lead.website || 'Not added'} href={lead.website ? (lead.website.startsWith('http') ? lead.website : `https://${lead.website}`) : undefined} external /></section>
+      <section className="panel detail-card"><div className="section-heading"><div><span className="eyebrow">BUSINESS</span><h2>Company information</h2></div></div><ContactRow icon={<CalendarDays size={17} />} label="Date visited" value={safeDate(lead.visitDate)} /><ContactRow icon={<Building2 size={17} />} label="Company" value={lead.companyName || 'Not added'} /><ContactRow icon={<Tags size={17} />} label="Category" value={lead.businessCategory || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Contact person" value={lead.personName || 'Not added'} /><ContactRow icon={<UserCircle2 size={17} />} label="Designation" value={lead.designation || 'Not added'} /><ContactRow icon={<MapPin size={17} />} label="Address" value={[lead.address, lead.city, lead.state, lead.pincode].filter(Boolean).join(', ') || 'Not added'} />{expo && <ContactRow icon={<Building2 size={17} />} label="Expo" value={expo.name} href={`/expos/${expo._id}?tab=overview`} />}</section>
+      <section className="panel detail-card notes-card"><div className="section-heading"><div><span className="eyebrow">CONTEXT</span><h2>Notes & social</h2></div></div><p className="lead-notes">{lead.notes || 'No notes yet. Add details from your conversation so the next follow-up feels personal.'}</p><div className="social-links">{lead.socialPlatform && (lead.socialProfile ? <a href={lead.socialProfile.startsWith('http') ? lead.socialProfile : `https://${lead.socialProfile}`} target="_blank" rel="noreferrer">{lead.socialPlatform}<ArrowUpRight size={13} /></a> : <span>{lead.socialPlatform}</span>)}{Object.entries(lead.socialMedia || {}).filter(([, value]) => value).map(([key, value]) => <a key={key} href={String(value).startsWith('http') ? String(value) : `https://${value}`} target="_blank" rel="noreferrer">{key}<ArrowUpRight size={13} /></a>)}</div><small className="source-line">Added {safeDate(lead.createdAt)} · {lead.source || 'Manual entry'}</small></section></div>
+    {edit && <LeadForm expoId={expo?._id || String(lead.expoId)} initial={lead} onClose={() => setEdit(false)} />}{confirmDelete && <ConfirmModal title="Delete this lead?" text={`This will permanently remove ${displayName} from your workspace.`} confirm="Delete lead" onCancel={() => setConfirmDelete(false)} onConfirm={() => del.mutate()} busy={del.isPending} />}</div>
+}
+function ContactRow({ icon, label, value, href, external = false, extraValues, type = 'text' }: { icon: ReactNode; label: string; value: string; href?: string; external?: boolean; extraValues?: string[]; type?: 'email' | 'phone' | 'text' }) { return <div className="contact-row"><span className="contact-icon">{icon}</span><div><small>{label}</small>{extraValues && extraValues.length > 1 ? <MultiValueViewer values={extraValues} type={type} label={label} /> : href ? <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>{value}{external && <ArrowUpRight size={13} />}</a> : <strong>{value}</strong>}</div>{href && !external && <a className="contact-action" href={href} aria-label={label}><ArrowUpRight size={15} /></a>}</div> }
+
+function AnalyticsPanel({ expoId }: { expoId: string }) {
+  const query = useQuery({ queryKey: ['analytics', expoId], queryFn: () => api<Analytics>(`/expos/${expoId}/analytics`) })
+  if (query.isLoading) return <LoadingRows />
+  if (query.isError || !query.data) return <ErrorPanel message="Could not load lead analytics." />
+  const data = query.data; const total = data.statuses.reduce((sum, item) => sum + item.count, 0); const tones = ['#f59e0b', '#55a877', '#648be8', '#ea7774', '#a8a9ab']
+  return <div className="analytics-grid"><section className="panel chart-panel"><div className="section-heading"><div><span className="eyebrow">LEAD MOMENTUM</span><h2>Acquisition trend</h2></div><span className="chart-total"><strong>{total}</strong> total leads</span></div>{data.trend.length ? <TrendChart data={data.trend} /> : <div className="chart-empty">Your lead trend will show here once you add leads.</div>}</section><section className="panel chart-panel"><div className="section-heading"><div><span className="eyebrow">FOLLOW-UP</span><h2>Status breakdown</h2></div></div>{total ? <div className="donut-layout"><div className="donut-wrap"><ResponsiveContainer width="100%" height="100%" minWidth={0}><PieChart><Pie data={statuses.map((item) => ({ name: item.label, value: data.statuses.find((entry) => entry._id === item.value)?.count || 0 }))} innerRadius="66%" outerRadius="94%" paddingAngle={3} dataKey="value" stroke="none">{statuses.map((item, index) => <Cell key={item.value} fill={tones[index]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="donut-center"><strong>{total}</strong><small>leads</small></div></div><div className="legend-list">{statuses.map((item, index) => { const count = data.statuses.find((entry) => entry._id === item.value)?.count || 0; return <div key={item.value}><i style={{ background: tones[index] }} /><span>{item.label}</span><strong>{count}</strong></div> })}</div></div> : <div className="chart-empty">Status distribution appears as leads are added.</div>}</section><section className="panel chart-panel category-panel"><div className="section-heading"><div><span className="eyebrow">WHO YOU MET</span><h2>Business categories</h2></div></div>{data.categories.length ? <div className="category-bars">{data.categories.map((item, index) => <div key={item._id}><div><span>{item._id}</span><strong>{item.count}</strong></div><span className="bar-track"><i style={{ width: `${Math.max(5, item.count / Math.max(...data.categories.map((v) => v.count)) * 100)}%`, background: ['#ff7b3d', '#8094e8', '#52aa7b', '#d99b42'][index % 4] }} /></span></div>)}</div> : <div className="chart-empty">Add a business category to a lead to see this breakdown.</div>}</section><section className="panel chart-panel completeness-panel"><div className="section-heading"><div><span className="eyebrow">DATA QUALITY</span><h2>Contact completeness</h2></div></div><div className="completeness-list">{[['Phone numbers', data.completeness.withPhone], ['Email addresses', data.completeness.withEmail], ['Company names', data.completeness.withCompany]].map(([label, count]) => <div key={String(label)}><div><span>{label}</span><strong>{count} / {data.completeness.total}</strong></div><span className="bar-track"><i style={{ width: `${data.completeness.total ? Number(count) / data.completeness.total * 100 : 0}%` }} /></span></div>)}</div></section></div>
+}
+type Analytics = { statuses: { _id: Status; count: number }[]; categories: { _id: string; count: number }[]; trend: { _id: string; count: number }[]; completeness: { total: number; withPhone: number; withEmail: number; withCompany: number } }
+function TrendChart({ data }: { data: { _id: string; count: number }[] }) { return <div className="trend-chart"><ResponsiveContainer width="100%" height="100%" minWidth={0}><AreaChart data={data} margin={{ left: 0, right: 9, top: 10, bottom: 0 }}><defs><linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ff762e" stopOpacity={0.21} /><stop offset="100%" stopColor="#ff762e" stopOpacity={0.015} /></linearGradient></defs><CartesianGrid stroke="#f0ede8" vertical={false} /><XAxis dataKey="_id" tickFormatter={(v: string) => format(parseISO(v), 'MMM d')} tickLine={false} axisLine={false} tick={{ fill: '#96928d', fontSize: 11 }} minTickGap={28} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#96928d', fontSize: 11 }} width={28} allowDecimals={false} /><Tooltip labelFormatter={(v) => safeDate(String(v))} /><Area type="monotone" dataKey="count" stroke="#ff762e" strokeWidth={2.5} fill="url(#trend-fill)" /></AreaChart></ResponsiveContainer></div> }
+function StatusSummary({ statuses: values, total }: { statuses: Analytics['statuses']; total: number }) { return <div className="status-summary-list">{statuses.map((item) => { const count = values.find((v) => v._id === item.value)?.count || 0; return <div className="summary-status" key={item.value}><div><span className={`summary-mark ${item.value}`} /><span>{item.label}</span><strong>{count}</strong></div><span className="summary-track"><i className={item.value} style={{ width: `${total ? count / total * 100 : 0}%` }} /></span></div> })}{total === 0 && <p className="summary-empty">Status counts appear when you add leads.</p>}</div> }
+
+function ActivityPage() { const [page, setPage] = useState(1); const query = useQuery({ queryKey: ['activity', page], queryFn: () => api<Page<ActivityItem>>(`/activity?page=${page}&pageSize=20`) }); return <div className="page-content"><div className="page-title-row"><div><span className="eyebrow">WORKSPACE HISTORY</span><h1>Recent activity</h1><p>Changes and milestones across your expo workspaces.</p></div></div><section className="panel activity-full">{query.isLoading ? <LoadingRows /> : query.data?.items.length ? <ActivityList items={query.data.items} /> : <EmptyState icon={<ActivityIcon size={22} />} title="No activity yet" text="Your expo and lead updates will show up here." />}{query.data && query.data.pages > 1 && <div className="pagination"><span>Page {page} of {query.data.pages}</span><button className="icon-button" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={17} /></button><button className="icon-button" disabled={page >= query.data!.pages} onClick={() => setPage(page + 1)}><ChevronRight size={17} /></button></div>}</section></div> }
+
+function ExpoForm({ initial, onClose }: { initial?: Expo; onClose: () => void }) {
+  const [error, setError] = useState(''); const qc = useQueryClient(); const notifyUser = useNotify()
+  const [form, setForm] = useState({
+    name: initial?.name || '',
+    startDate: initial?.startDate ? String(initial.startDate).slice(0, 10) : '',
+    endDate: initial?.endDate ? String(initial.endDate).slice(0, 10) : '',
+    venue: initial?.venue || '',
+    city: initial?.city || '',
+    organizer: initial?.organizer || '',
+    website: initial?.website || '',
+    description: initial?.description || '',
+    notes: initial?.notes || '',
+  })
+  const mutation = useMutation({ mutationFn: () => api(initial ? `/expos/${initial._id}` : '/expos', json(initial ? 'PUT' : 'POST', form)), onSuccess: () => { notifyUser(initial ? 'Expo details saved' : 'Expo created'); void qc.invalidateQueries(); onClose() }, onError: (e: Error) => setError(e.message) })
+  const update = (field: keyof typeof form, value: string) => setForm((old) => ({ ...old, [field]: value }))
+  return <Modal title={initial ? 'Edit expo details' : 'Create an expo'} eyebrow="EVENT WORKSPACE" onClose={onClose} wide><form onSubmit={(e) => { e.preventDefault(); setError(''); mutation.mutate() }} className="form-grid"><label className="span-two">Expo name *<input required maxLength={160} value={form.name} onChange={(e) => update('name', e.target.value)} placeholder="e.g. Electric Expo 2026" /></label><label>Start date<input type="date" value={form.startDate} onChange={(e) => update('startDate', e.target.value)} /></label><label>End date<input type="date" value={form.endDate} onChange={(e) => update('endDate', e.target.value)} /></label><label>Venue<input value={form.venue} onChange={(e) => update('venue', e.target.value)} placeholder="Expo center" /></label><label>City<input value={form.city} onChange={(e) => update('city', e.target.value)} placeholder="City" /></label><label>Organizer<input value={form.organizer} onChange={(e) => update('organizer', e.target.value)} placeholder="Organizer name" /></label><label><span>Expo website <span className="muted-label">(logo fetched automatically)</span></span><input type="url" value={form.website} onChange={(e) => update('website', e.target.value)} placeholder="https://eventsite.com" /></label><label className="span-two">Description<textarea rows={3} value={form.description} onChange={(e) => update('description', e.target.value)} placeholder="What is this expo about?" /></label><label className="span-two">Private notes<textarea rows={3} value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Reminders for your team…" /></label>{error && <p className="form-error span-two">{error}</p>}<div className="modal-actions span-two"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle size={16} className="spin" /> : initial ? <Check size={16} /> : <Plus size={16} />}{initial ? 'Save changes' : 'Create expo'}</button></div></form></Modal>
+}
+
+function LeadForm({ expoId, initial, onClose }: { expoId: string; initial?: Lead; onClose: () => void }) {
+  const [error, setError] = useState(''); const qc = useQueryClient(); const notifyUser = useNotify()
+  const initialEmails = [initial?.email, ...(initial?.otherEmails || [])].filter(Boolean).join(', ')
+  const initialPrimaryPhone = initial?.primaryPhone || ''
+  const initialOtherPhones = (initial?.otherPhones || []).filter(Boolean).join(', ')
+  const [form, setForm] = useState({
+    visitDate: initial?.visitDate ? String(initial.visitDate).slice(0, 10) : '',
+    personName: initial?.personName || '',
+    companyName: initial?.companyName || '',
+    businessCategory: initial?.businessCategory || '',
+    designation: initial?.designation || '',
+    primaryPhone: initialPrimaryPhone,
+    otherPhones: initialOtherPhones,
+    email: initialEmails,
+    website: initial?.website || '',
+    socialPlatform: initial?.socialPlatform || '',
+    socialProfile: initial?.socialProfile || '',
+    address: initial?.address || '',
+    city: initial?.city || '',
+    state: initial?.state || '',
+    pincode: initial?.pincode || '',
+    notes: initial?.notes || '',
+    status: initial?.status || 'new' as Status,
+    source: initial?.source || 'Manual entry',
+  })
+  const mutation = useMutation({
+    mutationFn: () => {
+      const payload = { ...form, socialMedia: initial?.socialMedia || {} }
+      return api(initial ? `/leads/${initial._id}` : `/expos/${expoId}/leads`, json(initial ? 'PUT' : 'POST', payload))
+    },
+    onSuccess: () => {
+      notifyUser(initial ? 'Lead details saved' : 'Lead added')
+      void qc.invalidateQueries()
+      onClose()
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+  const update = (field: keyof typeof form, value: string) => setForm((old) => ({ ...old, [field]: value }))
+  return <Modal title={initial ? 'Edit lead' : 'Add a lead'} eyebrow="LEAD CONTACT" onClose={onClose} wide><form onSubmit={(e) => { e.preventDefault(); setError(''); if (!form.companyName.trim() && !form.personName.trim()) { setError('Add a company name or contact person to continue.'); return }; mutation.mutate() }} className="form-grid">
+    <div className="form-section-label span-two">VISIT & BUSINESS</div>
+    <label>Date visited<input type="date" value={form.visitDate} onChange={(e) => update('visitDate', e.target.value)} /></label>
+    <label><span>Company name <span className="muted-label">(recommended)</span></span><input value={form.companyName} onChange={(e) => update('companyName', e.target.value)} placeholder="Company or business" /></label>
+    <label><span>Business category <span className="muted-label">(optional)</span></span><input value={form.businessCategory} onChange={(e) => update('businessCategory', e.target.value)} placeholder="e.g. Manufacturing" /></label>
+    <label><span>Contact person <span className="muted-label">(optional)</span></span><input value={form.personName} onChange={(e) => update('personName', e.target.value)} placeholder="Contact’s name" /></label>
+    <label>Designation<input value={form.designation} onChange={(e) => update('designation', e.target.value)} placeholder="Role or title" /></label>
+    <div className="form-section-label span-two">CONTACT</div>
+    <label><span>Mobile number(s) <span className="muted-label">(multiple allowed)</span></span><input type="text" value={form.primaryPhone} onChange={(e) => update('primaryPhone', e.target.value)} placeholder="e.g. 9825012345, 9825067890" /></label>
+    <label><span>Email <span className="muted-label">(multiple allowed)</span></span><input type="text" value={form.email} onChange={(e) => update('email', e.target.value)} placeholder="contact@company.com, info@company.com" /></label>
+    <label className="span-two">Other mobile numbers<input value={form.otherPhones} onChange={(e) => update('otherPhones', e.target.value)} placeholder="Additional numbers separated by commas" /></label>
+    <label>Website<input value={form.website} onChange={(e) => update('website', e.target.value)} placeholder="company.com" /></label>
+    <label>City<input value={form.city} onChange={(e) => update('city', e.target.value)} /></label>
+    <label className="span-two">Address<input value={form.address} onChange={(e) => update('address', e.target.value)} /></label>
+    <label>State<input value={form.state} onChange={(e) => update('state', e.target.value)} /></label>
+    <label>Pincode<input value={form.pincode} onChange={(e) => update('pincode', e.target.value)} /></label>
+    <div className="form-section-label span-two">SOCIAL MEDIA <span className="muted-label">(optional)</span></div>
+    <label>Platform<input value={form.socialPlatform} onChange={(e) => update('socialPlatform', e.target.value)} placeholder="e.g. LinkedIn, Instagram" /></label>
+    <label>Profile or link<input value={form.socialProfile} onChange={(e) => update('socialProfile', e.target.value)} placeholder="Profile URL or handle" /></label>
+    <div className="form-section-label span-two">FOLLOW-UP</div>
+    <label>Status<select value={form.status} onChange={(e) => update('status', e.target.value)}>{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+    <label>Source<input value={form.source} onChange={(e) => update('source', e.target.value)} /></label>
+    <label className="span-two">Notes<textarea rows={4} value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="A note about your conversation or next follow-up…" /></label>
+    {error && <p className="form-error span-two">{error}</p>}
+    <div className="modal-actions span-two"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={mutation.isPending}>{mutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Check size={16} />}{initial ? 'Save lead' : 'Add lead'}</button></div>
+  </form></Modal>
+}
+function ImportModal({ expoId, expoName, onClose }: { expoId: string; expoName: string; onClose: () => void }) {
+  const [preview, setPreview] = useState<ImportPreview | null>(null); const [file, setFile] = useState<File | null>(null); const [mapping, setMapping] = useState<Record<string, string>>({}); const [error, setError] = useState(''); const [result, setResult] = useState<{ imported: number; duplicates: number; invalid: number } | null>(null)
+  const qc = useQueryClient()
+  const previewMutation = useMutation({ mutationFn: async ({ selected, columns }: { selected: File; columns?: Record<string, string> }) => { const body = new FormData(); body.append('file', selected); if (columns) body.append('mapping', JSON.stringify(columns)); return api<ImportPreview>(`/expos/${expoId}/import/preview`, { method: 'POST', body }) }, onSuccess: (value) => { setPreview(value); setMapping(value.mapping) }, onError: (e: Error) => setError(e.message) })
+  const importMutation = useMutation({ mutationFn: async () => { if (!file) throw new Error('Choose an Excel file first.'); const body = new FormData(); body.append('file', file); body.append('mapping', JSON.stringify(preview?.mapping || mapping)); return api<{ imported: number; duplicates: number; invalid: number }>('/expos/' + expoId + '/import', { method: 'POST', body }) }, onSuccess: (value) => { setResult(value); void qc.invalidateQueries() }, onError: (e: Error) => setError(e.message) })
+  const pickFile = (selected?: File) => { if (!selected) return; if (!/\.xlsx?$/i.test(selected.name)) { setError('Choose an .xlsx or .xls file.'); return }; if (selected.size > 4 * 1024 * 1024) { setError('Excel files must be 4 MB or smaller on this deployment.'); return }; setFile(selected); setPreview(null); setError(''); previewMutation.mutate({ selected }) }
+  return <Modal title={result ? 'Import complete' : 'Import leads'} eyebrow={result ? 'READY TO GO' : expoName.toUpperCase()} onClose={onClose} wide>{result ? <div className="import-success"><span className="success-badge"><Check size={25} /></span><h3>{result.imported} leads added</h3><p>{result.duplicates} duplicates skipped · {result.invalid} invalid rows skipped</p><button className="button primary" onClick={onClose}>View leads <ArrowUpRight size={16} /></button></div> : <><div className={`drop-zone ${preview ? 'has-file' : ''}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); pickFile(e.dataTransfer.files[0]) }}><span className="file-icon"><FileSpreadsheet size={24} /></span><strong>{previewMutation.isPending ? 'Reading your spreadsheet…' : file?.name || 'Drop your Excel file here'}</strong><span>First sheet is read · .xlsx and .xls · max 4 MB</span><label className="button secondary small">{preview ? 'Choose another file' : 'Browse files'}<input type="file" accept=".xlsx,.xls" onChange={(e) => pickFile(e.target.files?.[0])} /></label></div>{error && <p className="form-error">{error}</p>}{preview && <><details className="column-mapping" open={!mapping.companyName && !mapping.personName}><summary>Check column mapping</summary><div className="mapping-fields">{importMapFields.map((field) => <label key={field.key}>{field.label}<select value={mapping[field.key] || ''} onChange={(e) => setMapping((current) => ({ ...current, [field.key]: e.target.value }))}><option value="">Auto detect</option>{preview.headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>)}<button type="button" className="button secondary small" disabled={previewMutation.isPending || !file} onClick={() => file && previewMutation.mutate({ selected: file, columns: mapping })}>{previewMutation.isPending ? 'Updating…' : 'Apply mapping'}</button></div></details><div className="import-summary"><div><strong>{preview.total}</strong><span>rows found</span></div><div className="valid"><strong>{preview.valid}</strong><span>ready to import</span></div><div className="duplicate"><strong>{preview.duplicates}</strong><span>duplicates</span></div><div className="invalid"><strong>{preview.invalid}</strong><span>invalid</span></div></div><div className="import-preview"><div className="preview-head"><strong>Preview</strong><span>Rows with a company name or contact person are ready to import</span></div><div className="preview-table"><div><span>Visited</span><span>Company</span><span>Contact</span><span>Mobile</span><span>Email</span><span>Result</span></div>{preview.rows.slice(0, 7).map((row) => {
+    const rowEmails = [row.data.email, ...(Array.isArray(row.data.otherEmails) ? row.data.otherEmails : [])].filter(Boolean) as string[]
+    const rowPhones = [row.data.primaryPhone, ...(Array.isArray(row.data.otherPhones) ? row.data.otherPhones : [])].filter(Boolean) as string[]
+    return <div key={row.rowNumber}><span>{row.data.visitDate ? safeDate(String(row.data.visitDate)) : '—'}</span><span>{String(row.data.companyName || '—')}</span><span>{String(row.data.personName || '—')}</span><span>{rowPhones.length ? <MultiValueViewer values={rowPhones} type="phone" /> : '—'}</span><span>{rowEmails.length ? <MultiValueViewer values={rowEmails} type="email" /> : '—'}</span><span className={row.duplicate ? 'duplicate' : row.valid ? 'valid' : 'invalid'}>{row.duplicate ? 'Duplicate' : row.valid ? 'Ready' : row.issue}</span></div>
+  })}</div>{preview.truncated && <small className="muted-note">Showing 7 sample rows. All valid rows will be imported.</small>}</div><p className="mapping-note"><Sparkles size={15} /> Company, optional category and contact details, mobile numbers, email, website and social media columns are detected automatically.</p></>}{!preview && !previewMutation.isPending && <div className="mapping-note"><Sparkles size={15} /> Use company name, optional category and contact person, designation, mobile number 1, other mobile numbers, email, website and social media columns.</div>}<button className="text-link sample-template" onClick={() => void downloadSampleTemplate(expoId, setError)}><Download size={14} />Download sample template</button><div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!preview || preview.valid === 0 || importMutation.isPending} onClick={() => importMutation.mutate()}>{importMutation.isPending ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import {preview?.valid || 0} leads</button></div></>}</Modal>
+}
+type ImportPreview = { total: number; valid: number; duplicates: number; invalid: number; truncated: boolean; headers: string[]; mapping: Record<string, string>; rows: { rowNumber: number; data: Record<string, unknown>; issue?: string; duplicate: boolean; valid: boolean }[] }
+
+function ExportModal({ expoId, expoName, onClose }: { expoId: string; expoName: string; onClose: () => void }) {
+  const [selected, setSelected] = useState<Status[]>(statuses.map((item) => item.value)); const [busy, setBusy] = useState(false); const notifyUser = useNotify()
+  const toggle = (value: Status) => setSelected((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])
+  return <Modal title="Export lead list" eyebrow={expoName.toUpperCase()} onClose={onClose}><p className="modal-intro">Choose which follow-up groups to include in your Excel file.</p><div className="export-status-options">{statuses.map((item) => <label key={item.value} className={`export-option ${item.value}`}><input type="checkbox" checked={selected.includes(item.value)} onChange={() => toggle(item.value)} /><span className="summary-mark" /><span>{item.label}</span></label>)}</div><div className="export-hint"><FileSpreadsheet size={17} /><span>Date, company, contact person, all saved mobile numbers, email and website are included. Source is set to Expo; the remaining columns are left blank.</span></div><div className="modal-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || selected.length === 0} onClick={() => { setBusy(true); void exportLeads(expoId, expoName, selected, undefined, notifyUser).then(onClose).finally(() => setBusy(false)) }}>{busy ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}Download .xlsx</button></div></Modal>
+}
+
+async function exportLeads(expoId: string, expoName: string, selectedStatuses?: Status[], leadIds?: string[], toast: ToastFn = notify) {
+  try { const response = await fetch(`/api/expos/${expoId}/export`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ statuses: selectedStatuses, leadIds }) }); if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.message || 'Export failed') }; const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = response.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] || `${expoName.replace(/[^a-z0-9]+/gi, '_')}_Leads.xlsx`; anchor.click(); URL.revokeObjectURL(url); toast('Excel file downloaded') } catch (error) { toast((error as Error).message, 'error') }
+}
+async function downloadSampleTemplate(expoId: string, reportError: (message: string) => void) {
+  try {
+    const response = await fetch(`/api/expos/${expoId}/import/template`, { credentials: 'include' })
+    if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.message || 'Could not download the sample file.') }
+    const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = response.headers.get('Content-Disposition')?.match(/filename="?([^";]+)"?/)?.[1] || 'Expo_Lead_Template.xlsx'; anchor.click(); URL.revokeObjectURL(url)
+  } catch (error) { reportError((error as Error).message) }
+}
+
+function Modal({ title, eyebrow, onClose, children, wide = false }: { title: string; eyebrow: string; onClose: () => void; children: ReactNode; wide?: boolean }) { useEffect(() => { const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }; window.addEventListener('keydown', onKey); document.body.style.overflow = 'hidden'; return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' } }, [onClose]); return <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}><section className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-header"><div><span className="eyebrow">{eyebrow}</span><h2 id="modal-title">{title}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={19} /></button></div><div className="modal-body">{children}</div></section></div> }
+function ConfirmModal({ title, text, confirm, onCancel, onConfirm, busy }: { title: string; text: string; confirm: string; onCancel: () => void; onConfirm: () => void; busy: boolean }) { return <Modal title={title} eyebrow="PLEASE CONFIRM" onClose={onCancel}><p className="modal-intro">{text}</p><div className="modal-actions"><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" disabled={busy} onClick={onConfirm}>{busy ? <LoaderCircle size={16} className="spin" /> : <Trash2 size={16} />}{confirm}</button></div></Modal> }
+function EmptyState({ icon, title, text, action }: { icon: ReactNode; title: string; text: string; action?: ReactNode }) { return <div className="empty-state"><span className="empty-icon">{icon}</span><h3>{title}</h3><p>{text}</p>{action && <div className="empty-actions">{action}</div>}</div> }
+function LoadingRows() { return <div className="loading-rows"><span /><span /><span /></div> }
+function ErrorPanel({ message }: { message: string }) { return <div className="error-panel"><CircleHelp size={18} /><span>{message}</span></div> }
